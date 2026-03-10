@@ -1,0 +1,14 @@
+c:\_Projekty\ABAPViewer\src-tauri\target\release\deps\thiserror-4d367f942f499b6b.d: C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\lib.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\aserror.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\display.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\var.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\private.rs c:\_Projekty\ABAPViewer\src-tauri\target\release\build\thiserror-72bc4df0d772882c\out/private.rs
+
+c:\_Projekty\ABAPViewer\src-tauri\target\release\deps\libthiserror-4d367f942f499b6b.rlib: C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\lib.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\aserror.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\display.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\var.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\private.rs c:\_Projekty\ABAPViewer\src-tauri\target\release\build\thiserror-72bc4df0d772882c\out/private.rs
+
+c:\_Projekty\ABAPViewer\src-tauri\target\release\deps\libthiserror-4d367f942f499b6b.rmeta: C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\lib.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\aserror.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\display.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\var.rs C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\private.rs c:\_Projekty\ABAPViewer\src-tauri\target\release\build\thiserror-72bc4df0d772882c\out/private.rs
+
+C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\lib.rs:
+C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\aserror.rs:
+C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\display.rs:
+C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\var.rs:
+C:\Users\borovsky\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\private.rs:
+c:\_Projekty\ABAPViewer\src-tauri\target\release\build\thiserror-72bc4df0d772882c\out/private.rs:
+
+# env-dep:OUT_DIR=c:\\_Projekty\\ABAPViewer\\src-tauri\\target\\release\\build\\thiserror-72bc4df0d772882c\\out
