@@ -1,1 +1,38 @@
 @import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+.highlighted-line {
+  position: relative;
+}
+
+.highlighted-line::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: #3b82f6;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+}
+
+.syntax-highlighter-container b {
+  color: #3b82f6;
+  font-weight: bold;
+  background-color: rgba(59, 130, 246, 0.1);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* For the search result snippets */
+.search-snippet b {
+  color: #60a5fa;
+  font-weight: bold;
+  background-color: rgba(59, 130, 246, 0.2);
+  padding: 0 1px;
+  border-radius: 1px;
+}

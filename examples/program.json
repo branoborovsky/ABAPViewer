@@ -1,0 +1,15 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "PROG",
+  "name": "Z_HELLO_WORLD",
+  "description": "Jednoduchý demo program",
+  "source": "REPORT z_hello_world.\n\n* Definícia dát\nDATA: lv_text TYPE string VALUE 'Ahoj svet'.\n\nSTART-OF-SELECTION.\n  WRITE: / lv_text.\n\n  \" Volanie funkčného modulu\n  CALL FUNCTION 'Z_DEMO_FUNCTION'\n    EXPORTING\n      iv_input = 'Test'.",
+  "subObjects": [
+    {
+      "name": "Z_HELLO_WORLD_TOP",
+      "type": "REPS",
+      "source": "*&---------------------------------------------------------------------*\n*&  Include           Z_HELLO_WORLD_TOP\n*&---------------------------------------------------------------------*\nDATA: gv_global TYPE i."
+    }
+  ]
+}

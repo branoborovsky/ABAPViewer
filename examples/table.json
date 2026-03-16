@@ -1,0 +1,15 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "TABL",
+  "name": "ZDEMO_USERS",
+  "description": "Tabuľka používateľov",
+  "fields": [
+    { "name": "MANDT", "key": true, "type": "CLNT", "length": "3", "dataElement": "MANDT", "domain": "MANDT", "description": "Mandant" },
+    { "name": "USER_ID", "key": true, "type": "CHAR", "length": "12", "dataElement": "XUBNAME", "domain": "XUBNAME", "description": "ID používateľa" },
+    { "name": "FIRST_NAME", "key": false, "type": "CHAR", "length": "40", "dataElement": "AD_NAMEFIR", "domain": "TEXT40", "description": "Meno" },
+    { "name": "LAST_NAME", "key": false, "type": "CHAR", "length": "40", "dataElement": "AD_NAMELAS", "domain": "TEXT40", "description": "Priezvisko" },
+    { "name": "EMAIL", "key": false, "type": "CHAR", "length": "100", "dataElement": "AD_SMTPADR", "domain": "AD_SMTPADR", "description": "E-mailová adresa" },
+    { "name": "CREATED_AT", "key": false, "type": "DATS", "length": "8", "dataElement": "ERDAT", "domain": "DATUM", "description": "Dátum vytvorenia" }
+  ]
+}

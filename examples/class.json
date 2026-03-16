@@ -1,0 +1,41 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "CLAS",
+  "name": "ZCL_DEMO_HELPER",
+  "description": "Pomocná trieda pre demo",
+  "definition": "CLASS zcl_demo_helper DEFINITION\n  PUBLIC\n  FINAL\n  CREATE PUBLIC.\n\n  PUBLIC SECTION.\n    METHODS: \n      get_user_name\n        IMPORTING iv_user_id TYPE char12\n        RETURNING VALUE(rv_name) TYPE string,\n      set_cache\n        IMPORTING iv_cache TYPE string.\n\n  PROTECTED SECTION.\n  PRIVATE SECTION.\n    DATA: mv_cache TYPE string.\nENDCLASS.",
+  "implementation": "CLASS zcl_demo_helper IMPLEMENTATION.\n  METHOD get_user_name.\n    \" Logika pre získanie mena\n    rv_name = 'Ján Novák'.\n  ENDMETHOD.\n\n  METHOD set_cache.\n    mv_cache = iv_cache.\n  ENDMETHOD.\nENDCLASS.",
+  "components": {
+    "attributes": [
+      { "name": "MV_CACHE", "visibility": "PRIVATE", "type": "STRING" }
+    ],
+    "methods": [
+      { 
+        "name": "GET_USER_NAME", 
+        "visibility": "PUBLIC", 
+        "description": "Vráti meno používateľa",
+        "parameters": {
+          "IMPORTING": [
+            { "name": "IV_USER_ID", "type": "CHAR12", "description": "ID používateľa" }
+          ],
+          "RETURNING": [
+            { "name": "RV_NAME", "type": "STRING", "description": "Meno" }
+          ]
+        },
+        "source": "  METHOD get_user_name.\n    \" Logika pre získanie mena\n    rv_name = 'Ján Novák'.\n  ENDMETHOD."
+      },
+      { 
+        "name": "SET_CACHE", 
+        "visibility": "PRIVATE", 
+        "description": "Nastaví cache",
+        "parameters": {
+          "IMPORTING": [
+            { "name": "IV_CACHE", "type": "STRING", "description": "Hodnota pre cache" }
+          ]
+        },
+        "source": "  METHOD set_cache.\n    mv_cache = iv_cache.\n  ENDMETHOD."
+      }
+    ]
+  }
+}

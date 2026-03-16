@@ -1,0 +1,25 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "FUGR",
+  "name": "Z_DEMO_GROUP",
+  "description": "Demo funkčná skupina",
+  "subObjects": [
+    {
+      "name": "Z_DEMO_FUNCTION",
+      "type": "FUNC",
+      "description": "Ukážkový funkčný modul",
+      "source": "FUNCTION z_demo_function.\n*\"----------------------------------------------------------------------\n*\"*\"Lokálne rozhranie:\n*\"  IMPORTING\n*\"     VALUE(IV_INPUT) TYPE  STRING\n*\"  EXPORTING\n*\"     VALUE(EV_OUTPUT) TYPE  STRING\n*\"----------------------------------------------------------------------\n\n  CONCATENATE 'Spracované: ' iv_input INTO ev_output.\n\nENDFUNCTION.",
+      "parameters": {
+        "importing": [
+          { "name": "IV_INPUT", "type": "STRING", "optional": false, "description": "Vstupný text" }
+        ],
+        "exporting": [
+          { "name": "EV_OUTPUT", "type": "STRING", "optional": false, "description": "Výstupný text" }
+        ],
+        "changing": [],
+        "tables": []
+      }
+    }
+  ]
+}

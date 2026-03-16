@@ -1,0 +1,46 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "PROG",
+  "name": "Z_COMPLEX_DEMO",
+  "description": "Komplexná ukážka so všetkými sub-objektami",
+  "source": "REPORT z_complex_demo.\n\nINCLUDE z_complex_demo_top.\nINCLUDE z_complex_demo_f01.\n\nSTART-OF-SELECTION.\n  CALL SCREEN 100.",
+  "subObjects": [
+    {
+      "name": "Z_COMPLEX_DEMO_TOP",
+      "type": "REPS",
+      "description": "Globálne dáta",
+      "source": "*&---------------------------------------------------------------------*\n*&  Include           Z_COMPLEX_DEMO_TOP\n*&---------------------------------------------------------------------*\nDATA: gv_okcode TYPE sy-ucomm,\n      gv_text   TYPE char40."
+    },
+    {
+      "name": "Z_COMPLEX_DEMO_F01",
+      "type": "REPS",
+      "description": "Form rutiny",
+      "source": "*&---------------------------------------------------------------------*\n*&  Include           Z_COMPLEX_DEMO_F01\n*&---------------------------------------------------------------------*\nFORM display_message.\n  MESSAGE 'Akcia spracovaná' TYPE 'S'.\nENDFORM."
+    },
+    {
+      "name": "0100",
+      "type": "DYNP",
+      "description": "Hlavná obrazovka",
+      "flowLogic": "PROCESS BEFORE OUTPUT.\n  MODULE status_0100.\n\nPROCESS AFTER INPUT.\n  MODULE user_command_0100.",
+      "elements": [
+        { "name": "GV_TEXT", "type": "IO", "text": "Vstup", "line": 2, "col": 10 },
+        { "name": "BTN_EXEC", "type": "PUSH", "text": "Vykonať", "line": 5, "col": 10 }
+      ]
+    },
+    {
+      "name": "Z_INTERNAL_FUNC",
+      "type": "FUNC",
+      "description": "Interná logika (ukážka parametrov)",
+      "source": "FUNCTION z_internal_func.\n*\"  IMPORTING\n*\"     VALUE(IV_ID) TYPE I\n*\"  EXPORTING\n*\"     VALUE(EV_SUCCESS) TYPE BOOLEAN\n\n  ev_success = 'X'.\nENDFUNCTION.",
+      "parameters": {
+        "importing": [
+          { "name": "IV_ID", "type": "I", "optional": false, "description": "Identifikátor" }
+        ],
+        "exporting": [
+          { "name": "EV_SUCCESS", "type": "BOOLEAN", "optional": false, "description": "Príznak úspechu" }
+        ]
+      }
+    }
+  ]
+}

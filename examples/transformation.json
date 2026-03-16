@@ -1,0 +1,8 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "XSLT",
+  "name": "Z_DEMO_TRANSFORM",
+  "description": "XML Transformácia",
+  "source": "<xsl:transform xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" version=\"1.0\">\n  <xsl:template match=\"/\">\n    <root>\n      <message>Hello from ABAP XSLT</message>\n    </root>\n  </xsl:template>\n</xsl:transform>"
+}

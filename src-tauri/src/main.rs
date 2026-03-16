@@ -172,7 +172,7 @@ fn import_objects(state: State<DbState>, objects: Vec<serde_json::Value>) -> Res
     let mut conn = state.0.lock().unwrap();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     
-    let count = objects.len();
+    let mut count = 0;
     {
         let mut stmt = tx.prepare("
             INSERT INTO objects (system, package, type, name, parent_name, description, content, raw_json)
@@ -182,36 +182,63 @@ fn import_objects(state: State<DbState>, objects: Vec<serde_json::Value>) -> Res
         for obj in objects {
             let system = obj["system"].as_str().unwrap_or("").to_string();
             let package = obj["package"].as_str().unwrap_or("").to_string();
-            let obj_type = obj["objectType"].as_str().unwrap_or("").to_string();
             let name = obj["name"].as_str().unwrap_or("").to_string();
             let description = obj["description"].as_str().unwrap_or("").to_string();
             
-            let source = obj["source"].as_str().unwrap_or("");
-            let definition = obj["definition"].as_str().unwrap_or("");
-            let implementation = obj["implementation"].as_str().unwrap_or("");
-            let flow_logic = obj["flowLogic"].as_str().unwrap_or("");
+            // Handle type/objectType
+            let obj_type = obj["type"].as_str()
+                .or_else(|| obj["objectType"].as_str())
+                .unwrap_or("")
+                .to_string();
             
-            let content = format!("{}\n{}\n{}\n{}", source, definition, implementation, flow_logic);
-            let raw_json = serde_json::to_string(&obj).unwrap_or_default();
+            // Handle parent_name
+            let parent_name = obj["parent_name"].as_str()
+                .or_else(|| obj["parentName"].as_str())
+                .or_else(|| obj["parent"].as_str())
+                .map(|s| s.to_string());
+
+            // Handle content
+            let content = if let Some(c) = obj["content"].as_str() {
+                c.to_string()
+            } else {
+                let source = obj["source"].as_str().unwrap_or("");
+                let definition = obj["definition"].as_str().unwrap_or("");
+                let implementation = obj["implementation"].as_str().unwrap_or("");
+                let flow_logic = obj["flowLogic"].as_str().unwrap_or("");
+                format!("{}\n{}\n{}\n{}", source, definition, implementation, flow_logic)
+            };
+
+            // Handle raw_json
+            let raw_json = if obj["raw_json"].is_string() {
+                obj["raw_json"].as_str().unwrap().to_string()
+            } else if obj["raw_json"].is_object() || obj["raw_json"].is_array() {
+                serde_json::to_string(&obj["raw_json"]).unwrap_or_default()
+            } else {
+                serde_json::to_string(&obj).unwrap_or_default()
+            };
 
             stmt.execute(params![
-                system, package, obj_type, name, Option::<String>::None, description, content, raw_json
+                system, package, obj_type, name, parent_name, description, content, raw_json
             ]).map_err(|e| e.to_string())?;
+            count += 1;
 
-            // Handle sub-objects if any
-            if let Some(sub_objects) = obj["subObjects"].as_array() {
-                for sub in sub_objects {
-                    let sub_type = sub["type"].as_str().unwrap_or("").to_string();
-                    let sub_name = sub["name"].as_str().unwrap_or("").to_string();
-                    let sub_desc = sub["description"].as_str().unwrap_or("").to_string();
-                    let sub_source = sub["source"].as_str().unwrap_or("");
-                    let sub_flow = sub["flowLogic"].as_str().unwrap_or("");
-                    let sub_content = format!("{}\n{}", sub_source, sub_flow);
-                    let sub_raw = serde_json::to_string(&sub).unwrap_or_default();
+            // Handle sub-objects ONLY if this is a raw object (no parent_name)
+            if parent_name.is_none() {
+                if let Some(sub_objects) = obj["subObjects"].as_array() {
+                    for sub in sub_objects {
+                        let sub_type = sub["type"].as_str().unwrap_or("").to_string();
+                        let sub_name = sub["name"].as_str().unwrap_or("").to_string();
+                        let sub_desc = sub["description"].as_str().unwrap_or("").to_string();
+                        let sub_source = sub["source"].as_str().unwrap_or("");
+                        let sub_flow = sub["flowLogic"].as_str().unwrap_or("");
+                        let sub_content = format!("{}\n{}", sub_source, sub_flow);
+                        let sub_raw = serde_json::to_string(&sub).unwrap_or_default();
 
-                    stmt.execute(params![
-                        system, package, sub_type, sub_name, Some(name.clone()), sub_desc, sub_content, sub_raw
-                    ]).map_err(|e| e.to_string())?;
+                        stmt.execute(params![
+                            system, package, sub_type, sub_name, Some(name.clone()), sub_desc, sub_content, sub_raw
+                        ]).map_err(|e| e.to_string())?;
+                        count += 1;
+                    }
                 }
             }
         }
@@ -228,14 +255,37 @@ fn clear_database(state: State<DbState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn delete_package(state: State<DbState>, system: String, package: String) -> Result<(), String> {
+fn delete_package(state: State<DbState>, system: String, pkg: String) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
-    conn.execute("DELETE FROM objects WHERE system = ? AND package = ?", [system, package]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM objects WHERE system = ? AND package = ?", [system, pkg]).map_err(|e| e.to_string())?;
     Ok(())
 }
 
+#[tauri::command]
+fn get_db_path(state: State<DbState>) -> Result<String, String> {
+    let conn = state.0.lock().unwrap();
+    Ok(conn.path().unwrap_or("").to_string())
+}
+
+#[tauri::command]
+fn set_db_path(state: State<DbState>, path: String) -> Result<String, String> {
+    let mut conn_guard = state.0.lock().unwrap();
+    
+    // Open new connection
+    let new_conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    init_db(&new_conn).map_err(|e| e.to_string())?;
+    
+    // Replace old connection
+    *conn_guard = new_conn;
+    
+    Ok(path)
+}
+
 fn main() {
-  let conn = Connection::open("abap_viewer.db").expect("failed to open database");
+  let mut db_path = std::env::current_dir().expect("failed to get current directory");
+  db_path.push("abap_viewer.db");
+  
+  let conn = Connection::open(&db_path).expect("failed to open database");
   init_db(&conn).expect("failed to initialize database");
 
   tauri::Builder::default()
@@ -246,7 +296,9 @@ fn main() {
         search_objects, 
         import_objects, 
         clear_database,
-        delete_package
+        delete_package,
+        get_db_path,
+        set_db_path
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

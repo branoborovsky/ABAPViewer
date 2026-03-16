@@ -12,16 +12,25 @@ import {
   Terminal,
   Cpu,
   Trash2,
-  ArrowLeft
+  ArrowLeft,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Zap,
+  Code2,
+  Settings,
+  X
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter';
 import abap from 'react-syntax-highlighter/dist/esm/languages/prism/abap';
 import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
+import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { invoke } from '@tauri-apps/api/core';
+import ABAP_EXPORT_SCRIPT from './exporter.abap?raw';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -34,6 +43,8 @@ interface ABAPObject {
   name: string;
   description: string;
   parent_name?: string;
+  parentName?: string;
+  parent?: string;
 }
 
 interface FullObject extends ABAPObject {
@@ -43,6 +54,8 @@ interface FullObject extends ABAPObject {
 
 SyntaxHighlighter.registerLanguage('abap', abap);
 SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('xml', markup);
+SyntaxHighlighter.registerLanguage('xslt', markup);
 
 export default function App() {
   const [treeData, setTreeData] = useState<ABAPObject[]>([]);
@@ -51,15 +64,121 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isImporting, setIsImporting] = useState(false);
+  const [importLogs, setImportLogs] = useState<string[]>([]);
+  const [importStats, setImportStats] = useState({ total: 0, current: 0, success: 0, error: 0, phase: '' });
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [deleteConfirmation, setDeleteConfirmation] = useState<{system: string, pkg: string} | null>(null);
   const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [isResizing, setIsResizing] = useState(false);
+  const [highlightTerm, setHighlightTerm] = useState('');
+  const [showExportScript, setShowExportScript] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [dbPath, setDbPath] = useState('');
+  const [newDbPath, setNewDbPath] = useState('');
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const newWidth = Math.max(200, Math.min(600, e.clientX));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  useEffect(() => {
+    if (highlightTerm && selectedObject) {
+      setTimeout(() => {
+        const container = document.querySelector('.syntax-highlighter-container');
+        if (container) {
+          const highlightedLine = container.querySelector('.highlighted-line');
+          if (highlightedLine) {
+            highlightedLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      }, 200);
+    }
+  }, [highlightTerm, selectedObject, activeSubObject]);
 
   useEffect(() => {
     fetchTree();
+    fetchSettings();
   }, []);
 
+  const fetchSettings = async () => {
+    try {
+      if (isTauri) {
+        const path = await invoke('get_db_path');
+        setDbPath(path as string);
+        setNewDbPath(path as string);
+      } else {
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+          const data = await res.json();
+          setDbPath(data.dbPath);
+          setNewDbPath(data.dbPath);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch settings", err);
+    }
+  };
+
+  const saveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      if (isTauri) {
+        await invoke('set_db_path', { path: newDbPath });
+        setDbPath(newDbPath);
+      } else {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ newPath: newDbPath })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setDbPath(data.dbPath);
+        }
+      }
+      setIsSettingsOpen(false);
+      fetchTree();
+    } catch (err) {
+      console.error("Failed to save settings", err);
+      alert("Chyba pri ukladaní nastavení.");
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
   const isTauri = !!(window as any).__TAURI_INTERNALS__;
+
+  const clearDatabase = async () => {
+    if (!confirm("Naozaj chcete vymazať celú databázu?")) return;
+    try {
+      const res = await fetch('/api/clear', { method: 'POST' });
+      if (res.ok) {
+        setTreeData([]);
+        setSelectedObject(null);
+      }
+    } catch (err) {
+      console.error("Failed to clear database", err);
+    }
+  };
 
   const fetchTree = async () => {
     try {
@@ -100,7 +219,7 @@ export default function App() {
     }
   };
 
-  const selectObject = async (name: string, addToHistory = true) => {
+  const selectObject = async (name: string, addToHistory = true, term = '') => {
     try {
       let data;
       if (isTauri) {
@@ -121,6 +240,7 @@ export default function App() {
         setActiveSubObject('main');
         setSearchResults([]);
         setSearchQuery('');
+        setHighlightTerm(term);
       }
     } catch (err) {
       console.error("Failed to load object", err);
@@ -155,40 +275,124 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setImportLogs([]);
+    setImportStats({ total: 0, current: 0, success: 0, error: 0, phase: 'Otváram ZIP archív...' });
     setIsImporting(true);
+    
     try {
       const zip = new JSZip();
       const contents = await zip.loadAsync(file);
+      const jsonFiles = Object.entries(contents.files).filter(([name]) => name.endsWith('.json'));
+      
+      setImportStats(prev => ({ ...prev, total: jsonFiles.length, phase: 'Spracovávam súbory...' }));
       const objects: any[] = [];
 
-      for (const [filename, zipEntry] of Object.entries(contents.files)) {
-        if (filename.endsWith('.json')) {
-          const text = await zipEntry.async('string');
-          try {
-            objects.push(JSON.parse(text));
-          } catch (e) {
-            console.warn(`Failed to parse ${filename}`, e);
-          }
+      for (const [filename, zipEntry] of jsonFiles) {
+        setImportStats(prev => ({ ...prev, current: prev.current + 1 }));
+        const text = await zipEntry.async('string');
+        try {
+          const obj = JSON.parse(text);
+          objects.push(obj);
+          setImportStats(prev => ({ ...prev, success: prev.success + 1 }));
+          setImportLogs(prev => [...prev.slice(-8), `[OK] ${filename}`]);
+        } catch (e) {
+          setImportStats(prev => ({ ...prev, error: prev.error + 1 }));
+          setImportLogs(prev => [...prev.slice(-8), `[CHYBA] ${filename}: Neplatný JSON`]);
         }
       }
 
       if (objects.length > 0) {
+        setImportStats(prev => ({ ...prev, phase: 'Ukladám do databázy...' }));
+        setImportLogs(prev => [...prev, `Odosielam ${objects.length} objektov do DB...`]);
+        
+        // Flatten objects for both Web and Desktop to ensure consistent processing
+        const flattened: any[] = [];
+        objects.forEach(obj => {
+          // 1. Main object
+          const searchableContent = (obj.source || "") + "\n" + (obj.definition || "") + "\n" + (obj.implementation || "") + "\n" + (obj.flowLogic || "");
+          flattened.push({
+            system: obj.system,
+            package: obj.package,
+            type: obj.objectType || obj.type,
+            name: obj.name,
+            parent_name: null,
+            description: obj.description || "",
+            content: searchableContent,
+            raw_json: JSON.stringify(obj)
+          });
+
+          // 2. Sub-objects (Includes, Functions, Dynpros)
+          if (obj.subObjects && obj.subObjects.length > 0) {
+            obj.subObjects.forEach((sub: any) => {
+              let subContent = (sub.source || "") + "\n" + (sub.flowLogic || "") + "\n" + 
+                             (sub.elements ? sub.elements.map((el: any) => `${el.name} ${el.text}`).join(" ") : "");
+              if (sub.parameters) subContent += "\n" + JSON.stringify(sub.parameters);
+
+              flattened.push({
+                system: obj.system,
+                package: obj.package,
+                type: sub.type,
+                name: sub.name,
+                parent_name: obj.name,
+                description: sub.description || "",
+                content: subContent,
+                raw_json: JSON.stringify(sub)
+              });
+            });
+          }
+
+          // 3. Class Methods
+          if ((obj.objectType === 'CLAS' || obj.type === 'CLAS') && obj.components?.methods) {
+            obj.components.methods.forEach((meth: any) => {
+              let methSource = meth.source || "";
+              if (!methSource && obj.implementation) {
+                const escapedName = meth.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`METHOD\\s+${escapedName}\\s*\\.(.*?)\\s+ENDMETHOD`, 'is');
+                const match = obj.implementation.match(regex);
+                if (match) {
+                  methSource = match[0];
+                } else {
+                  const regexAlt = new RegExp(`METHOD\\s+${escapedName}\\b(.*?)\\bENDMETHOD`, 'is');
+                  const matchAlt = obj.implementation.match(regexAlt);
+                  if (matchAlt) methSource = matchAlt[0];
+                }
+              }
+              
+              flattened.push({
+                system: obj.system,
+                package: obj.package,
+                type: 'METH',
+                name: meth.name,
+                parent_name: obj.name,
+                description: meth.description || "",
+                content: methSource || meth.name,
+                raw_json: JSON.stringify({ ...meth, type: 'METH', source: methSource })
+              });
+            });
+          }
+        });
+
         if (isTauri) {
-          await invoke('import_objects', { objects });
+          await invoke('import_objects', { objects: flattened });
         } else {
           await fetch('/api/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ objects })
+            body: JSON.stringify({ objects: flattened })
           });
         }
+        setImportLogs(prev => [...prev, "Databáza bola úspešne aktualizovaná."]);
         await fetchTree();
+      } else {
+        setImportLogs(prev => [...prev, "Nenašli sa žiadne platné JSON objekty na import."]);
       }
+      
+      setImportStats(prev => ({ ...prev, phase: 'Dokončené' }));
     } catch (err) {
       console.error("Import failed", err);
-      alert("Chyba pri importe ZIP súboru.");
+      setImportLogs(prev => [...prev, `FATÁLNA CHYBA: ${err instanceof Error ? err.message : String(err)}`]);
+      setImportStats(prev => ({ ...prev, phase: 'Chyba' }));
     } finally {
-      setIsImporting(false);
       if (e.target) e.target.value = '';
     }
   };
@@ -249,26 +453,40 @@ export default function App() {
   const groupedTree = useMemo(() => {
     const root: any = {};
     
+    // Helper to get parent name regardless of casing
+    const getParentName = (obj: ABAPObject) => obj.parent_name || obj.parentName || obj.parent || "";
+
     // Create a set of objects that are already children to avoid double display at top level
-    const childSet = new Set(treeData.filter(obj => obj.parent_name).map(obj => `${obj.system}|${obj.package}|${obj.name}`));
+    const childSet = new Set(treeData.filter(obj => getParentName(obj) !== "").map(obj => `${obj.system}|${obj.package}|${obj.name}`));
 
     // First pass: build structure without sub-objects
     treeData.forEach(obj => {
-      if (obj.parent_name) return; // Skip sub-objects for now
+      const pName = getParentName(obj);
+      if (pName !== "") return; // Skip sub-objects for now
       
-      // Also skip if this object is already a child of another object (e.g. an include in a program)
+      // Also skip if this object is already a child of another object
       if (childSet.has(`${obj.system}|${obj.package}|${obj.name}`)) return;
 
       if (!root[obj.system]) root[obj.system] = {};
       if (!root[obj.system][obj.package]) root[obj.system][obj.package] = {};
       
-      // Group by category for better UX
       let category = 'Ostatné';
-      if (obj.type === 'PROG') category = 'Programy';
-      else if (obj.type === 'TABL') category = 'Tabuľky';
-      else if (obj.type === 'FUGR') category = 'Funkčné skupiny';
-      else if (obj.type === 'CLAS') category = 'Triedy';
-      else if (obj.type === 'XSLT') category = 'Transformácie';
+      const type = (obj.type || '').toUpperCase().trim();
+      
+      if (type === 'PROG' || type === 'REPORT') category = 'Programy';
+      else if (type === 'TABL') category = 'Tabuľky';
+      else if (type === 'FUGR') category = 'Funkčné skupiny';
+      else if (type === 'CLAS') category = 'Triedy';
+      else if (type === 'INTF') category = 'Rozhrania';
+      else if (type === 'XSLT') category = 'Transformácie';
+      else if (type === 'TTYP') category = 'Tabuľkové typy';
+      else if (type === 'DTEL') category = 'Dátové prvky';
+      else if (type === 'DOMA') category = 'Domény';
+      else if (type === 'MSAG') category = 'Správy';
+      else if (type === 'TRAN') category = 'Transakcie';
+      else if (type === 'SHLP') category = 'Search Helpy';
+      else if (type === 'VIEW') category = 'Pohľady';
+      else if (type === 'ENQU') category = 'Zámky';
 
       if (!root[obj.system][obj.package][category]) root[obj.system][obj.package][category] = {};
       
@@ -280,37 +498,75 @@ export default function App() {
 
     // Second pass: attach sub-objects to parents
     treeData.forEach(obj => {
-      if (!obj.parent_name) return;
+      const pName = getParentName(obj);
+      if (pName === "") return;
 
-      // Find parent in the tree
-      for (const sys in root) {
-        for (const pkg in root[sys]) {
-          for (const cat in root[sys][pkg]) {
-            if (root[sys][pkg][cat][obj.parent_name]) {
-              root[sys][pkg][cat][obj.parent_name].children.push(obj);
-              return;
-            }
-          }
+      const parentSys = root[obj.system];
+      if (!parentSys) return;
+      const parentPkg = parentSys[obj.package];
+      if (!parentPkg) return;
+
+      // Find parent in any category within the same package
+      let found = false;
+      for (const cat in parentPkg) {
+        if (parentPkg[cat][pName]) {
+          parentPkg[cat][pName].children.push(obj);
+          found = true;
+          break;
         }
+      }
+      
+      if (!found) {
+        console.warn(`Parent ${pName} not found for object ${obj.name} in package ${obj.package}`);
       }
     });
 
+    console.log("Grouped Tree:", root);
     return root;
   }, [treeData]);
 
   return (
-    <div className="flex h-screen bg-[#1e1e1e] text-[#cccccc] font-sans selection:bg-[#264f78]">
+    <div className={cn(
+      "flex h-screen bg-[#1e1e1e] text-[#cccccc] font-sans selection:bg-[#264f78]",
+      isResizing && "cursor-col-resize select-none"
+    )}>
       {/* Sidebar */}
-      <div className="w-80 flex flex-col border-r border-[#333333] bg-[#252526]">
+      <div 
+        className="flex flex-col border-r border-[#333333] bg-[#252526] shrink-0"
+        style={{ width: sidebarWidth }}
+      >
         <div className="p-4 border-b border-[#333333] flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-white">
             <Cpu className="w-5 h-5 text-blue-400" />
             <span>ABAP Viewer</span>
           </div>
-          <label className="cursor-pointer hover:text-white transition-colors p-1 rounded hover:bg-[#333333]">
-            <Upload className="w-4 h-4" />
-            <input type="file" className="hidden" accept=".zip" onChange={handleFileUpload} />
-          </label>
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => setShowExportScript(true)}
+              className="p-1 rounded hover:bg-[#333333] text-[#858585] hover:text-blue-400 transition-colors"
+              title="Zobraziť ABAP exportný program"
+            >
+              <Code2 className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-1 rounded hover:bg-[#333333] text-[#858585] hover:text-gray-200 transition-colors"
+              title="Nastavenia"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={clearDatabase}
+              className="p-1 rounded hover:bg-[#333333] text-[#858585] hover:text-red-400 transition-colors"
+              title="Vymazať celú databázu"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <label className="cursor-pointer hover:text-white transition-colors p-1 rounded hover:bg-[#333333] text-[#858585]">
+              <Upload className="w-4 h-4" />
+              <input type="file" className="hidden" accept=".zip" onChange={handleFileUpload} />
+            </label>
+          </div>
         </div>
 
         {/* Search Bar */}
@@ -332,14 +588,14 @@ export default function App() {
                 <div 
                   key={res.id}
                   className="p-2 hover:bg-[#2a2d2e] cursor-pointer border-b border-[#333333]"
-                  onClick={() => selectObject(res.name)}
+                  onClick={() => selectObject(res.name, true, searchQuery)}
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-mono text-blue-400 bg-blue-400/10 px-1 rounded">{res.type}</span>
                     <span className="text-sm font-bold text-white">{res.name}</span>
                   </div>
                   <div className="text-xs text-[#858585] truncate">{res.description}</div>
-                  <div className="text-[10px] text-[#666] mt-1 italic" dangerouslySetInnerHTML={{ __html: res.snippet }} />
+                  <div className="text-[10px] text-[#666] mt-1 italic search-snippet" dangerouslySetInnerHTML={{ __html: res.snippet }} />
                 </div>
               ))}
             </div>
@@ -401,37 +657,50 @@ export default function App() {
                               {expandedNodes.has(`${sys}-${pkg}-${cat}`) && (
                                 <div className="ml-4 border-l border-[#333333]">
                                   {Object.values(objs).map((obj: any) => (
-                                    <div key={obj.name}>
+                                    <div key={`${obj.system}-${obj.package}-${obj.name}`}>
                                       <div 
                                         className={cn(
                                           "flex items-center gap-2 py-1 px-3 hover:bg-[#2a2d2e] cursor-pointer rounded m-0.5 group",
                                           selectedObject?.name === obj.name && "bg-[#37373d] text-white"
                                         )}
                                         onClick={() => {
-                                          if (obj.children.length > 0) toggleNode(`obj-${obj.name}`);
+                                          if (obj.children.length > 0) toggleNode(`obj-${obj.system}-${obj.package}-${obj.name}`);
                                           selectObject(obj.name);
                                         }}
                                       >
                                         <div className="w-3 flex justify-center">
-                                          {obj.children.length > 0 && (expandedNodes.has(`obj-${obj.name}`) ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />)}
+                                          {obj.children.length > 0 && (expandedNodes.has(`obj-${obj.system}-${obj.package}-${obj.name}`) ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />)}
                                         </div>
-                                        {obj.type === 'TABL' ? <TableIcon className="w-3.5 h-3.5 text-green-500" /> : <FileCode className="w-3.5 h-3.5 text-blue-300" />}
-                                        <span className="truncate group-hover:text-white">{obj.name}</span>
+                                        {obj.type === 'TABL' ? <TableIcon className="w-3.5 h-3.5 text-green-500" /> : 
+                                         obj.type === 'CLAS' ? <Cpu className="w-3.5 h-3.5 text-purple-400" /> :
+                                         <FileCode className="w-3.5 h-3.5 text-blue-300" />}
+                                        <div className="flex flex-col min-w-0 flex-1">
+                                          <span className="truncate group-hover:text-white leading-tight">{obj.name}</span>
+                                          {obj.description && <span className="text-[9px] text-[#858585] truncate leading-tight">{obj.description}</span>}
+                                        </div>
                                       </div>
 
-                                      {expandedNodes.has(`obj-${obj.name}`) && obj.children.length > 0 && (
+                                      {expandedNodes.has(`obj-${obj.system}-${obj.package}-${obj.name}`) && obj.children.length > 0 && (
                                         <div className="ml-6 border-l border-[#444]">
-                                          {obj.children.map((child: any) => (
+                                          {obj.children.sort((a: any, b: any) => a.name.localeCompare(b.name)).map((child: any) => (
                                             <div 
-                                              key={child.name}
+                                              key={`${child.system}-${child.package}-${child.name}`}
                                               className={cn(
                                                 "flex items-center gap-2 py-1 px-3 hover:bg-[#2a2d2e] cursor-pointer rounded m-0.5 text-[12px]",
                                                 selectedObject?.name === child.name && "bg-[#37373d] text-white"
                                               )}
                                               onClick={() => selectObject(child.name)}
                                             >
-                                              <span className="text-[9px] font-mono text-[#666] w-8 uppercase">{child.type}</span>
-                                              <span className="truncate">{child.name}</span>
+                                              <div className="w-3 flex justify-center">
+                                                {child.type === 'METH' ? <Zap className="w-2.5 h-2.5 text-yellow-500" /> : 
+                                                 child.type === 'FUNC' ? <Code2 className="w-2.5 h-2.5 text-blue-400" /> :
+                                                 <div className="w-1 h-1 rounded-full bg-gray-500" />}
+                                              </div>
+                                              <span className="text-[9px] font-mono text-[#666] w-8 uppercase flex-shrink-0">{child.type}</span>
+                                              <div className="flex flex-col min-w-0 flex-1">
+                                                <span className="truncate leading-tight">{child.name}</span>
+                                                {child.description && <span className="text-[9px] text-[#858585] truncate leading-tight">{child.description}</span>}
+                                              </div>
                                             </div>
                                           ))}
                                         </div>
@@ -452,6 +721,18 @@ export default function App() {
           ))}
         </div>
       </div>
+
+      {/* Resize Handle */}
+      <div
+        className={cn(
+          "w-1 hover:bg-blue-500/50 cursor-col-resize transition-colors z-50 shrink-0",
+          isResizing && "bg-blue-500"
+        )}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setIsResizing(true);
+        }}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-[#1e1e1e]">
@@ -480,6 +761,7 @@ export default function App() {
               <div className="text-right text-[10px] text-[#666] font-mono">
                 <div>SYS: {selectedObject.system}</div>
                 <div>PKG: {selectedObject.package}</div>
+                {selectedObject.parent_name && <div className="text-blue-400/70">PARENT: {selectedObject.parent_name}</div>}
               </div>
             </div>
 
@@ -497,6 +779,8 @@ export default function App() {
                         <tr className="bg-[#252526] text-left text-[#858585] uppercase text-[10px] tracking-wider">
                           <th className="p-3 border-b border-[#333333]">Field Name</th>
                           <th className="p-3 border-b border-[#333333] text-center">Key</th>
+                          <th className="p-3 border-b border-[#333333]">Data Element</th>
+                          <th className="p-3 border-b border-[#333333]">Domain</th>
                           <th className="p-3 border-b border-[#333333]">Type</th>
                           <th className="p-3 border-b border-[#333333]">Length</th>
                           <th className="p-3 border-b border-[#333333]">Description</th>
@@ -509,6 +793,8 @@ export default function App() {
                             <td className="p-3 border-b border-[#333333] text-center">
                               {f.key && <span className="text-amber-500 font-bold">X</span>}
                             </td>
+                            <td className="p-3 border-b border-[#333333] text-blue-400/80 font-mono text-[11px]">{f.dataElement || '-'}</td>
+                            <td className="p-3 border-b border-[#333333] text-purple-400/80 font-mono text-[11px]">{f.domain || '-'}</td>
                             <td className="p-3 border-b border-[#333333] text-[#ccc]">{f.type}</td>
                             <td className="p-3 border-b border-[#333333] text-[#858585]">{f.length}</td>
                             <td className="p-3 border-b border-[#333333] text-[#858585]">{f.description}</td>
@@ -571,8 +857,8 @@ export default function App() {
 
                       return (
                         <div className="flex flex-col h-full">
-                          {/* Metadata for Function Module or Class */}
-                          {(currentObj.type === 'FUNC' || (selectedObject.type === 'CLAS' && activeSubObject === 'main')) && (
+                          {/* Metadata for Function Module, Class or Method */}
+                          {(currentObj.type === 'FUNC' || currentObj.type === 'METH' || (selectedObject.type === 'CLAS' && activeSubObject === 'main')) && (
                             <div className="p-4 bg-[#252526]/50 border-b border-[#333333] overflow-y-auto max-h-64">
                               {currentObj.parameters && (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -657,15 +943,37 @@ export default function App() {
 
                           {/* Source Code */}
                           <div 
-                            className="flex-1 relative overflow-hidden cursor-text"
+                            className="flex-1 relative overflow-hidden cursor-text syntax-highlighter-container"
                             onDoubleClick={handleCodeDoubleClick}
                             title="Dvojklik pre navigáciu na objekt"
                           >
                             <SyntaxHighlighter 
-                              language={selectedObject?.type === 'TABL' ? 'sql' : 'abap'} 
+                              language={
+                                selectedObject?.type === 'TABL' ? 'sql' : 
+                                selectedObject?.type === 'XSLT' ? 'xml' : 
+                                'abap'
+                              } 
                               style={vscDarkPlus}
                               customStyle={{ margin: 0, padding: '1.5rem', height: '100%', fontSize: '13px', background: 'transparent' }}
                               showLineNumbers
+                              wrapLines={true}
+                              lineProps={(lineNumber) => {
+                                const code = activeSubObject === 'implementation' ? selectedObject?.raw_json?.implementation :
+                                             activeSubObject === 'main' ? (selectedObject?.raw_json?.definition || selectedObject?.raw_json?.source || selectedObject?.content) :
+                                             (currentObj?.flowLogic || currentObj?.source || "");
+                                
+                                if (highlightTerm && code) {
+                                  const lines = code.split('\n');
+                                  const line = lines[lineNumber - 1];
+                                  if (line && line.toLowerCase().includes(highlightTerm.toLowerCase())) {
+                                    return { 
+                                      className: 'highlighted-line',
+                                      style: { display: 'block', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderLeft: '2px solid #3b82f6' } 
+                                    };
+                                  }
+                                }
+                                return {};
+                              }}
                             >
                               {activeSubObject === 'implementation' ? selectedObject?.raw_json?.implementation :
                                activeSubObject === 'main' ? (selectedObject?.raw_json?.definition || selectedObject?.raw_json?.source || selectedObject?.content) :
@@ -700,11 +1008,87 @@ export default function App() {
       </div>
 
       {isImporting && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[100]">
-          <div className="bg-[#252526] p-10 rounded-xl shadow-2xl border border-[#454545] flex flex-col items-center max-w-sm w-full">
-            <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-            <p className="text-xl font-bold text-white">Importujem SAP objekty</p>
-            <p className="text-sm text-[#858585] mt-3 text-center">Spracovávam JSON súbory a indexujem databázu pre rýchle vyhľadávanie.</p>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[100] p-6">
+          <div className="bg-[#252526] rounded-xl shadow-2xl border border-[#454545] flex flex-col max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            {/* Header */}
+            <div className="p-6 border-b border-[#333333] flex items-center justify-between bg-[#2d2d2d]">
+              <div className="flex items-center gap-3">
+                {importStats.phase === 'Dokončené' ? (
+                  <CheckCircle2 className="w-6 h-6 text-green-500" />
+                ) : importStats.phase === 'Chyba' ? (
+                  <AlertCircle className="w-6 h-6 text-red-500" />
+                ) : (
+                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                )}
+                <h2 className="text-xl font-bold text-white">Import SAP objektov</h2>
+              </div>
+              <div className="text-xs font-mono text-[#858585] bg-[#1e1e1e] px-2 py-1 rounded">
+                {importStats.phase}
+              </div>
+            </div>
+
+            {/* Stats Grid */}
+            <div className="grid grid-cols-4 gap-4 p-6 bg-[#1e1e1e]/50">
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase text-[#666] font-bold">Celkovo</span>
+                <span className="text-xl font-mono text-white">{importStats.total}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase text-[#666] font-bold">Spracované</span>
+                <span className="text-xl font-mono text-blue-400">{importStats.current}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase text-[#666] font-bold">Úspešné</span>
+                <span className="text-xl font-mono text-green-500">{importStats.success}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase text-[#666] font-bold">Chyby</span>
+                <span className="text-xl font-mono text-red-500">{importStats.error}</span>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="px-6">
+              <div className="w-full bg-[#333] h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className="bg-blue-500 h-full transition-all duration-300 ease-out"
+                  style={{ width: `${importStats.total > 0 ? (importStats.current / importStats.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Logs Area */}
+            <div className="flex-1 p-6 overflow-hidden flex flex-col">
+              <div className="flex items-center gap-2 mb-2 text-[#858585]">
+                <Terminal className="w-4 h-4" />
+                <span className="text-xs font-bold uppercase tracking-wider">Protokol spracovania</span>
+              </div>
+              <div className="flex-1 bg-[#1e1e1e] rounded border border-[#333] p-4 font-mono text-[11px] overflow-y-auto space-y-1">
+                {importLogs.map((log, idx) => (
+                  <div key={idx} className={cn(
+                    log.includes('[CHYBA]') || log.includes('FATÁLNA') ? "text-red-400" : 
+                    log.includes('[OK]') ? "text-green-400/70" : "text-[#858585]"
+                  )}>
+                    {log}
+                  </div>
+                ))}
+                {importStats.phase !== 'Dokončené' && importStats.phase !== 'Chyba' && (
+                  <div className="animate-pulse text-blue-400">...</div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-[#333333] flex justify-end bg-[#2d2d2d]">
+              {(importStats.phase === 'Dokončené' || importStats.phase === 'Chyba') && (
+                <button 
+                  onClick={() => setIsImporting(false)}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-all shadow-lg hover:shadow-blue-500/20"
+                >
+                  Zavrieť protokol
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -732,6 +1116,123 @@ export default function App() {
                 className="px-4 py-2 rounded bg-red-600 hover:bg-red-700 text-white transition-colors text-sm font-medium"
               >
                 Vymazať dáta
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showExportScript && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[100] p-6">
+          <div className="bg-[#252526] rounded-xl shadow-2xl border border-[#454545] flex flex-col max-w-4xl w-full h-[80vh] overflow-hidden">
+            <div className="p-6 border-b border-[#333333] flex items-center justify-between bg-[#2d2d2d]">
+              <div className="flex items-center gap-3">
+                <Code2 className="w-6 h-6 text-blue-400" />
+                <h2 className="text-xl font-bold text-white">ABAP Exportný Program</h2>
+              </div>
+              <button 
+                onClick={() => setShowExportScript(false)}
+                className="text-[#858585] hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden relative bg-[#1e1e1e]">
+              <div className="absolute top-4 right-4 z-10">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(ABAP_EXPORT_SCRIPT);
+                    alert("Kód bol skopírovaný do schránky");
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium transition-all shadow-lg"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  Kopírovať kód
+                </button>
+              </div>
+              <div className="h-full overflow-auto">
+                <SyntaxHighlighter 
+                  language="abap" 
+                  style={vscDarkPlus}
+                  customStyle={{ margin: 0, padding: '2rem', fontSize: '12px', background: 'transparent' }}
+                  showLineNumbers
+                >
+                  {ABAP_EXPORT_SCRIPT}
+                </SyntaxHighlighter>
+              </div>
+            </div>
+            <div className="p-4 border-t border-[#333333] flex justify-between items-center bg-[#2d2d2d]">
+              <p className="text-xs text-[#858585]">
+                Tento program vygeneruje ZIP súbor so všetkými objektmi v balíčku, ktorý následne nahráte do tohto prehliadača.
+              </p>
+              <button 
+                onClick={() => setShowExportScript(false)}
+                className="px-6 py-2 bg-[#333333] hover:bg-[#444444] text-white rounded-md transition-colors font-medium"
+              >
+                Zavrieť
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-[#252526] border border-[#333333] rounded-lg shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-[#333333] flex items-center justify-between bg-[#2d2d2d]">
+              <div className="flex items-center gap-2 font-bold text-white">
+                <Settings className="w-5 h-5 text-blue-400" />
+                <span>Nastavenia</span>
+              </div>
+              <button 
+                onClick={() => setIsSettingsOpen(false)}
+                className="p-1 hover:bg-[#333333] rounded text-[#858585] hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-[#cccccc] block">
+                  Cesta k databáze (SQLite)
+                </label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={newDbPath}
+                    onChange={(e) => setNewDbPath(e.target.value)}
+                    className="flex-1 bg-[#3c3c3c] border border-[#333333] rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                    placeholder="napr. abap_viewer.db"
+                  />
+                </div>
+                <p className="text-xs text-[#858585]">
+                  Aktuálna cesta: <span className="text-[#cccccc] font-mono">{dbPath}</span>
+                </p>
+              </div>
+
+              <div className="bg-[#1e1e1e] p-3 rounded border border-[#333333] text-xs text-[#858585] space-y-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                  <p>Zmena cesty k databáze vytvorí nový súbor alebo sa pripojí k existujúcemu na danej ceste.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-[#333333] flex justify-end gap-3 bg-[#2d2d2d]">
+              <button 
+                onClick={() => setIsSettingsOpen(false)}
+                className="px-4 py-2 text-sm text-[#cccccc] hover:text-white transition-colors"
+              >
+                Zrušiť
+              </button>
+              <button 
+                onClick={saveSettings}
+                disabled={isSavingSettings || newDbPath === dbPath}
+                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-2"
+              >
+                {isSavingSettings ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Uložiť nastavenia
               </button>
             </div>
           </div>

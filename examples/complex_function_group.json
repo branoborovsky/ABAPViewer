@@ -1,0 +1,53 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "FUGR",
+  "name": "Z_COMPLEX_FG",
+  "description": "Komplexná funkčná skupina so sub-objektami",
+  "subObjects": [
+    {
+      "name": "LZ_COMPLEX_FGTOP",
+      "type": "REPS",
+      "description": "Globálne dáta funkčnej skupiny",
+      "source": "FUNCTION-POOL z_complex_fg.\n\n* Globálne premenné zdieľané medzi FM a obrazovkami\nDATA: gv_status TYPE string,\n      gv_user   TYPE char12."
+    },
+    {
+      "name": "LZ_COMPLEX_FGF01",
+      "type": "REPS",
+      "description": "Interné rutiny",
+      "source": "*&---------------------------------------------------------------------*\n*&  Include           LZ_COMPLEX_FGF01\n*&---------------------------------------------------------------------*\nFORM validate_user USING iv_user TYPE char12.\n  \" Logika validácie\nENDFORM."
+    },
+    {
+      "name": "Z_GET_USER_DETAILS",
+      "type": "FUNC",
+      "description": "Získanie detailov používateľa",
+      "source": "FUNCTION z_get_user_details.\n*\"----------------------------------------------------------------------\n*\"*\"Lokálne rozhranie:\n*\"  IMPORTING\n*\"     VALUE(IV_USER_ID) TYPE  CHAR12\n*\"  EXPORTING\n*\"     VALUE(EV_NAME) TYPE  STRING\n*\"     VALUE(EV_EMAIL) TYPE  STRING\n*\"  TABLES\n*\"      ET_ROLES STRUCTURE  ZDEMO_ROLES OPTIONAL\n*\"  EXCEPTIONS\n*\"      USER_NOT_FOUND\n*\"----------------------------------------------------------------------\n\n  ev_name = 'Peter Veselý'.\n  ev_email = 'peter@example.com'.\n\nENDFUNCTION.",
+      "parameters": {
+        "importing": [
+          { "name": "IV_USER_ID", "type": "CHAR12", "optional": false, "description": "ID používateľa" }
+        ],
+        "exporting": [
+          { "name": "EV_NAME", "type": "STRING", "optional": false, "description": "Meno" },
+          { "name": "EV_EMAIL", "type": "STRING", "optional": false, "description": "E-mail" }
+        ],
+        "tables": [
+          { "name": "ET_ROLES", "type": "ZDEMO_ROLES", "optional": true, "description": "Zoznam rolí" }
+        ],
+        "exceptions": [
+          { "name": "USER_NOT_FOUND", "description": "Používateľ neexistuje" }
+        ]
+      }
+    },
+    {
+      "name": "0200",
+      "type": "DYNP",
+      "description": "Dialógové okno detailov",
+      "flowLogic": "PROCESS BEFORE OUTPUT.\n  MODULE status_0200.\n\nPROCESS AFTER INPUT.\n  MODULE user_command_0200.",
+      "elements": [
+        { "name": "EV_NAME", "type": "IO", "text": "Meno", "line": 2, "col": 10 },
+        { "name": "EV_EMAIL", "type": "IO", "text": "E-mail", "line": 3, "col": 10 },
+        { "name": "BTN_CLOSE", "type": "PUSH", "text": "Zavrieť", "line": 6, "col": 10 }
+      ]
+    }
+  ]
+}

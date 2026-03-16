@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import Database from "better-sqlite3";
 import path from "path";
+import Database from "better-sqlite3";
 import fs from "fs";
 
 async function startServer() {
@@ -9,46 +9,69 @@ async function startServer() {
   const PORT = 3000;
 
   // Initialize Database
-  const db = new Database("abap_viewer.db");
+  let dbPath = path.resolve(process.cwd(), "abap_viewer.db");
+  let db = new Database(dbPath);
   
-  // Create tables
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS objects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      system TEXT,
-      package TEXT,
-      type TEXT,
-      name TEXT,
-      parent_name TEXT,
-      description TEXT,
-      content TEXT,
-      raw_json TEXT
-    );
-    
-    CREATE VIRTUAL TABLE IF NOT EXISTS objects_fts USING fts5(
-      name, 
-      description, 
-      content,
-      content='objects',
-      content_rowid='id'
-    );
+  const initTables = (database: any) => {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS objects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        system TEXT,
+        package TEXT,
+        type TEXT,
+        name TEXT,
+        parent_name TEXT,
+        description TEXT,
+        content TEXT,
+        raw_json TEXT
+      );
+      
+      CREATE VIRTUAL TABLE IF NOT EXISTS objects_fts USING fts5(
+        name, 
+        description, 
+        content,
+        content='objects',
+        content_rowid='id'
+      );
 
-    -- Triggers for FTS
-    CREATE TRIGGER IF NOT EXISTS objects_ai AFTER INSERT ON objects BEGIN
-      INSERT INTO objects_fts(rowid, name, description, content) VALUES (new.id, new.name, new.description, new.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS objects_ad AFTER DELETE ON objects BEGIN
-      INSERT INTO objects_fts(objects_fts, rowid, name, description, content) VALUES('delete', old.id, old.name, old.description, old.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS objects_au AFTER UPDATE ON objects BEGIN
-      INSERT INTO objects_fts(objects_fts, rowid, name, description, content) VALUES('delete', old.id, old.name, old.description, old.content);
-      INSERT INTO objects_fts(rowid, name, description, content) VALUES (new.id, new.name, new.description, new.content);
-    END;
-  `);
+      -- Triggers for FTS
+      CREATE TRIGGER IF NOT EXISTS objects_ai AFTER INSERT ON objects BEGIN
+        INSERT INTO objects_fts(rowid, name, description, content) VALUES (new.id, new.name, new.description, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS objects_ad AFTER DELETE ON objects BEGIN
+        INSERT INTO objects_fts(objects_fts, rowid, name, description, content) VALUES('delete', old.id, old.name, old.description, old.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS objects_au AFTER UPDATE ON objects BEGIN
+        INSERT INTO objects_fts(objects_fts, rowid, name, description, content) VALUES('delete', old.id, old.name, old.description, old.content);
+        INSERT INTO objects_fts(rowid, name, description, content) VALUES (new.id, new.name, new.description, new.content);
+      END;
+    `);
+  };
+
+  initTables(db);
 
   app.use(express.json({ limit: '50mb' }));
 
   // API Routes
+  app.get("/api/settings", (req, res) => {
+    res.json({ dbPath });
+  });
+
+  app.post("/api/settings", (req, res) => {
+    const { newPath } = req.body;
+    if (!newPath) return res.status(400).json({ error: "Path is required" });
+    
+    try {
+      db.close();
+      dbPath = newPath;
+      db = new Database(dbPath);
+      initTables(db);
+      res.json({ success: true, dbPath });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/tree", (req, res) => {
     const rows = db.prepare("SELECT system, package, type, name, parent_name, description FROM objects ORDER BY system, package, type, name").all();
     res.json(rows);
@@ -64,20 +87,35 @@ async function startServer() {
   });
 
   app.get("/api/search", (req, res) => {
-    const query = req.query.q;
+    const query = req.query.q as string;
     if (!query) return res.json([]);
     
-    const results = db.prepare(`
-      SELECT o.id, o.name, o.type, o.description, snippet(objects_fts, 2, '<b>', '</b>', '...', 10) as snippet
-      FROM objects_fts f
-      JOIN objects o ON f.rowid = o.id
-      WHERE objects_fts MATCH ?
-      GROUP BY o.system, o.package, o.name, o.type
-      ORDER BY rank
-      LIMIT 50
-    `).all(query);
-    
-    res.json(results);
+    try {
+      // Try FTS5 search first with prefix matching
+      const sanitizedQuery = query.replace(/"/g, '""');
+      const ftsQuery = `"${sanitizedQuery}"*`;
+      
+      const results = db.prepare(`
+        SELECT o.id, o.name, o.type, o.description, snippet(objects_fts, 2, '<b>', '</b>', '...', 15) as snippet
+        FROM objects_fts f
+        JOIN objects o ON f.rowid = o.id
+        WHERE objects_fts MATCH ?
+        GROUP BY o.system, o.package, o.name, o.type
+        ORDER BY rank
+        LIMIT 50
+      `).all(ftsQuery);
+      res.json(results);
+    } catch (err) {
+      console.error("FTS search failed, falling back to LIKE", err);
+      // Fallback to LIKE if FTS query is invalid
+      const results = db.prepare(`
+        SELECT id, name, type, description, '' as snippet
+        FROM objects
+        WHERE name LIKE ? OR description LIKE ? OR content LIKE ?
+        LIMIT 50
+      `).all(`%${query}%`, `%${query}%`, `%${query}%`);
+      res.json(results);
+    }
   });
 
   app.post("/api/import", (req, res) => {
@@ -89,40 +127,16 @@ async function startServer() {
 
     const transaction = db.transaction((objs) => {
       for (const obj of objs) {
-        // 1. Insert the main object
-        let searchableContent = (obj.source || "") + "\n" + (obj.definition || "") + "\n" + (obj.implementation || "") + "\n" + (obj.flowLogic || "");
-        
         insert.run({
           system: obj.system,
           package: obj.package,
-          type: obj.objectType,
+          type: obj.type,
           name: obj.name,
-          parent_name: null,
-          description: obj.description,
-          content: searchableContent,
-          raw_json: JSON.stringify(obj)
+          parent_name: obj.parent_name || null,
+          description: obj.description || "",
+          content: obj.content || "",
+          raw_json: typeof obj.raw_json === 'string' ? obj.raw_json : JSON.stringify(obj.raw_json || obj)
         });
-
-        // 2. If it's a FUGR or has subObjects, insert them as separate searchable entries linked to parent
-        if (obj.subObjects && obj.subObjects.length > 0) {
-          for (const sub of obj.subObjects) {
-            let subContent = (sub.source || "") + "\n" + (sub.flowLogic || "") + "\n" + 
-                           (sub.elements ? sub.elements.map((el: any) => `${el.name} ${el.text}`).join(" ") : "");
-            
-            if (sub.parameters) subContent += "\n" + JSON.stringify(sub.parameters);
-
-            insert.run({
-              system: obj.system,
-              package: obj.package,
-              type: sub.type,
-              name: sub.name,
-              parent_name: obj.name,
-              description: sub.description || "",
-              content: subContent,
-              raw_json: JSON.stringify(sub)
-            });
-          }
-        }
       }
     });
 
@@ -130,6 +144,7 @@ async function startServer() {
       transaction(objects);
       res.json({ success: true, count: objects.length });
     } catch (err: any) {
+      console.error("Import failed", err);
       res.status(500).json({ error: err.message });
     }
   });
