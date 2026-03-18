@@ -97,10 +97,9 @@ async function startServer() {
       
       const results = db.prepare(`
         SELECT o.id, o.name, o.type, o.description, snippet(objects_fts, 2, '<b>', '</b>', '...', 15) as snippet
-        FROM objects_fts f
-        JOIN objects o ON f.rowid = o.id
+        FROM objects_fts
+        JOIN objects o ON objects_fts.rowid = o.id
         WHERE objects_fts MATCH ?
-        GROUP BY o.system, o.package, o.name, o.type
         ORDER BY rank
         LIMIT 50
       `).all(ftsQuery);

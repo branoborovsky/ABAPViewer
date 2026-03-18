@@ -218,7 +218,7 @@ fn import_objects(state: State<DbState>, objects: Vec<serde_json::Value>) -> Res
             };
 
             stmt.execute(params![
-                system, package, obj_type, name, parent_name, description, content, raw_json
+                system.clone(), package.clone(), obj_type, name.clone(), parent_name, description, content, raw_json
             ]).map_err(|e| e.to_string())?;
             count += 1;
 
@@ -231,11 +231,18 @@ fn import_objects(state: State<DbState>, objects: Vec<serde_json::Value>) -> Res
                         let sub_desc = sub["description"].as_str().unwrap_or("").to_string();
                         let sub_source = sub["source"].as_str().unwrap_or("");
                         let sub_flow = sub["flowLogic"].as_str().unwrap_or("");
-                        let sub_content = format!("{}\n{}", sub_source, sub_flow);
+                        let sub_elements = if let Some(elements) = sub["elements"].as_array() {
+                            elements.iter().map(|el| {
+                                format!("{} {}", el["name"].as_str().unwrap_or(""), el["text"].as_str().unwrap_or(""))
+                            }).collect::<Vec<String>>().join(" ")
+                        } else {
+                            "".to_string()
+                        };
+                        let sub_content = format!("{}\n{}\n{}", sub_source, sub_flow, sub_elements);
                         let sub_raw = serde_json::to_string(&sub).unwrap_or_default();
 
                         stmt.execute(params![
-                            system, package, sub_type, sub_name, Some(name.clone()), sub_desc, sub_content, sub_raw
+                            system.clone(), package.clone(), sub_type, sub_name, Some(name.clone()), sub_desc, sub_content, sub_raw
                         ]).map_err(|e| e.to_string())?;
                         count += 1;
                     }
@@ -264,7 +271,7 @@ fn delete_package(state: State<DbState>, system: String, pkg: String) -> Result<
 #[tauri::command]
 fn delete_object(state: State<DbState>, system: String, pkg: String, name: String) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
-    conn.execute("DELETE FROM objects WHERE system = ? AND package = ? AND name = ?", [system, pkg, name]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM objects WHERE system = ? AND package = ? AND name = ?", [system.clone(), pkg.clone(), name.clone()]).map_err(|e| e.to_string())?;
     // Also delete sub-objects
     conn.execute("DELETE FROM objects WHERE system = ? AND package = ? AND parent_name = ?", [system, pkg, name]).map_err(|e| e.to_string())?;
     Ok(())

@@ -989,7 +989,7 @@ export default function App() {
                               wrapLines={true}
                               lineProps={(lineNumber) => {
                                 const code = activeSubObject === 'implementation' ? selectedObject?.raw_json?.implementation :
-                                             activeSubObject === 'main' ? (selectedObject?.raw_json?.definition || selectedObject?.raw_json?.source || selectedObject?.content) :
+                                             activeSubObject === 'main' ? (selectedObject?.raw_json?.definition || selectedObject?.raw_json?.source || selectedObject?.raw_json?.flowLogic || selectedObject?.content) :
                                              (currentObj?.flowLogic || currentObj?.source || "");
                                 
                                 if (highlightTerm && code) {
@@ -1006,7 +1006,7 @@ export default function App() {
                               }}
                             >
                               {activeSubObject === 'implementation' ? selectedObject?.raw_json?.implementation :
-                               activeSubObject === 'main' ? (selectedObject?.raw_json?.definition || selectedObject?.raw_json?.source || selectedObject?.content) :
+                               activeSubObject === 'main' ? (selectedObject?.raw_json?.definition || selectedObject?.raw_json?.source || selectedObject?.raw_json?.flowLogic || selectedObject?.content) :
                                (currentObj?.flowLogic || currentObj?.source || "")}
                             </SyntaxHighlighter>
                           </div>
