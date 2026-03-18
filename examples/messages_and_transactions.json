@@ -1,0 +1,24 @@
+[
+  {
+    "system": "DEV",
+    "package": "Z_DEMO",
+    "objectType": "MSAG",
+    "name": "Z_DEMO_MSG",
+    "description": "Trieda správ pre demo",
+    "messages": [
+      { "number": "001", "text": "Objekt &1 bol úspešne vytvorený." },
+      { "number": "002", "text": "Chyba pri spracovaní objektu &1." },
+      { "number": "003", "text": "Neplatný stav: &1." }
+    ]
+  },
+  {
+    "system": "DEV",
+    "package": "Z_DEMO",
+    "objectType": "TRAN",
+    "name": "ZDEMO_APP",
+    "description": "Demo aplikácia",
+    "transactionType": "REPORT",
+    "program": "Z_DEMO_REPORT",
+    "screen": "1000"
+  }
+]

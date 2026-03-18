@@ -165,6 +165,18 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/object/:system/:packageName/:objectName", (req, res) => {
+    const { system, packageName, objectName } = req.params;
+    try {
+      db.prepare("DELETE FROM objects WHERE system = ? AND package = ? AND name = ?").run(system, packageName, objectName);
+      // Also delete sub-objects if any
+      db.prepare("DELETE FROM objects WHERE system = ? AND package = ? AND parent_name = ?").run(system, packageName, objectName);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

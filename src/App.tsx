@@ -67,7 +67,7 @@ export default function App() {
   const [importLogs, setImportLogs] = useState<string[]>([]);
   const [importStats, setImportStats] = useState({ total: 0, current: 0, success: 0, error: 0, phase: '' });
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-  const [deleteConfirmation, setDeleteConfirmation] = useState<{system: string, pkg: string} | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{system: string, pkg: string, name?: string} | null>(null);
   const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [isResizing, setIsResizing] = useState(false);
@@ -409,39 +409,62 @@ export default function App() {
     setDeleteConfirmation({ system, pkg });
   };
 
+  const handleDeleteObject = async (e: React.MouseEvent, system: string, pkg: string, name: string) => {
+    e.stopPropagation();
+    setDeleteConfirmation({ system, pkg, name });
+  };
+
   const confirmDelete = async () => {
     if (!deleteConfirmation) return;
-    const { system, pkg } = deleteConfirmation;
+    const { system, pkg, name } = deleteConfirmation;
     
-    console.log('Confirming delete for:', { system, pkg });
+    console.log('Confirming delete for:', { system, pkg, name });
     setDeleteConfirmation(null);
 
     try {
-      if (isTauri) {
-        await invoke('delete_package', { system, package: pkg });
-        console.log('Delete successful (Tauri)');
-        await fetchTree();
-        if (selectedObject?.system === system && selectedObject?.package === pkg) {
-          setSelectedObject(null);
+      if (name) {
+        // Delete single object
+        if (isTauri) {
+          await invoke('delete_object', { system, pkg, name });
+          console.log('Delete object successful (Tauri)');
+          await fetchTree();
+          if (selectedObject?.name === name) {
+            setSelectedObject(null);
+          }
+        } else {
+          const url = `/api/object/${encodeURIComponent(system)}/${encodeURIComponent(pkg)}/${encodeURIComponent(name)}`;
+          const res = await fetch(url, { method: 'DELETE' });
+          if (res.ok) {
+            await fetchTree();
+            if (selectedObject?.name === name) {
+              setSelectedObject(null);
+            }
+          } else {
+            const errorData = await res.json();
+            alert(`Chyba pri mazaní objektu: ${errorData.error || res.statusText}`);
+          }
         }
       } else {
-        const url = `/api/package/${encodeURIComponent(system)}/${encodeURIComponent(pkg)}`;
-        console.log('Calling delete API:', url);
-        
-        const res = await fetch(url, {
-          method: 'DELETE'
-        });
-        
-        if (res.ok) {
-          console.log('Delete successful');
+        // Delete entire package
+        if (isTauri) {
+          await invoke('delete_package', { system, pkg });
+          console.log('Delete package successful (Tauri)');
           await fetchTree();
           if (selectedObject?.system === system && selectedObject?.package === pkg) {
             setSelectedObject(null);
           }
         } else {
-          const errorData = await res.json();
-          console.error('Delete failed on server:', errorData);
-          alert(`Chyba pri mazaní: ${errorData.error || res.statusText}`);
+          const url = `/api/package/${encodeURIComponent(system)}/${encodeURIComponent(pkg)}`;
+          const res = await fetch(url, { method: 'DELETE' });
+          if (res.ok) {
+            await fetchTree();
+            if (selectedObject?.system === system && selectedObject?.package === pkg) {
+              setSelectedObject(null);
+            }
+          } else {
+            const errorData = await res.json();
+            alert(`Chyba pri mazaní paketu: ${errorData.error || res.statusText}`);
+          }
         }
       }
     } catch (err) {
@@ -678,6 +701,13 @@ export default function App() {
                                           <span className="truncate group-hover:text-white leading-tight">{obj.name}</span>
                                           {obj.description && <span className="text-[9px] text-[#858585] truncate leading-tight">{obj.description}</span>}
                                         </div>
+                                        <button 
+                                          onClick={(e) => handleDeleteObject(e, obj.system, obj.package, obj.name)}
+                                          className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition-all"
+                                          title="Vymazať objekt"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
                                       </div>
 
                                       {expandedNodes.has(`obj-${obj.system}-${obj.package}-${obj.name}`) && obj.children.length > 0 && (
@@ -1101,7 +1131,12 @@ export default function App() {
               <h3 className="text-lg font-bold text-white">Potvrdenie vymazania</h3>
             </div>
             <p className="text-[#cccccc] mb-6">
-              Naozaj chcete vymazať všetky dáta paketu <span className="text-white font-mono font-bold">{deleteConfirmation.pkg}</span> zo systému <span className="text-white font-mono font-bold">{deleteConfirmation.system}</span>? 
+              {deleteConfirmation.name ? (
+                <>Naozaj chcete vymazať objekt <span className="text-white font-mono font-bold">{deleteConfirmation.name}</span> z balíčka <span className="text-white font-mono font-bold">{deleteConfirmation.pkg}</span>?</>
+              ) : (
+                <>Naozaj chcete vymazať všetky dáta paketu <span className="text-white font-mono font-bold">{deleteConfirmation.pkg}</span> zo systému <span className="text-white font-mono font-bold">{deleteConfirmation.system}</span>?</>
+              )}
+              <br /><br />
               Táto akcia je nevratná.
             </p>
             <div className="flex justify-end gap-3">

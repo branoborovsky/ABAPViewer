@@ -1,0 +1,35 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "INTF",
+  "name": "ZIF_DEMO_SERVICE",
+  "description": "Rozhranie pre demo službu",
+  "definition": "INTERFACE zif_demo_service PUBLIC.\n  METHODS: \n    execute\n      IMPORTING iv_input TYPE string\n      RETURNING VALUE(rv_output) TYPE string,\n    get_status\n      RETURNING VALUE(rv_status) TYPE z_demo_status_de.\nENDINTERFACE.",
+  "components": {
+    "methods": [
+      { 
+        "name": "EXECUTE", 
+        "visibility": "PUBLIC", 
+        "description": "Spustí službu",
+        "parameters": {
+          "IMPORTING": [
+            { "name": "IV_INPUT", "type": "STRING", "description": "Vstup" }
+          ],
+          "RETURNING": [
+            { "name": "RV_OUTPUT", "type": "STRING", "description": "Výstup" }
+          ]
+        }
+      },
+      { 
+        "name": "GET_STATUS", 
+        "visibility": "PUBLIC", 
+        "description": "Vráti aktuálny stav",
+        "parameters": {
+          "RETURNING": [
+            { "name": "RV_STATUS", "type": "Z_DEMO_STATUS_DE", "description": "Stav" }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "system": "DEV",
+  "package": "Z_DEMO",
+  "objectType": "ENQU",
+  "name": "EZ_DEMO_LOCK",
+  "description": "Zámok pre demo objekty",
+  "lockMode": "EXCLUSIVE",
+  "tables": [
+    { 
+      "name": "Z_DEMO_TABLE", 
+      "fields": [
+        { "name": "MANDT", "lock": true },
+        { "name": "ID", "lock": true }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "system": "DEV",
+    "package": "Z_DEMO",
+    "objectType": "SHLP",
+    "name": "Z_DEMO_SH",
+    "description": "Search help pre demo objekty",
+    "selectionMethod": "Z_DEMO_VIEW",
+    "parameters": [
+      { "name": "ID", "import": true, "export": true, "lpos": 1, "spos": 1, "dataElement": "CHAR10" },
+      { "name": "NAME", "import": false, "export": true, "lpos": 2, "spos": 2, "dataElement": "STRING" }
+    ]
+  },
+  {
+    "system": "DEV",
+    "package": "Z_DEMO",
+    "objectType": "VIEW",
+    "name": "Z_DEMO_VIEW",
+    "description": "Pohľad na demo objekty",
+    "viewType": "DATABASE",
+    "tables": [
+      { "name": "Z_DEMO_TABLE", "alias": "T1" }
+    ],
+    "fields": [
+      { "name": "ID", "table": "T1", "fieldName": "ID" },
+      { "name": "NAME", "table": "T1", "fieldName": "NAME" },
+      { "name": "STATUS", "table": "T1", "fieldName": "STATUS" }
+    ]
+  }
+]

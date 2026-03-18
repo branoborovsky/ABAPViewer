@@ -1,0 +1,41 @@
+[
+  {
+    "system": "DEV",
+    "package": "Z_DEMO",
+    "objectType": "DOMA",
+    "name": "Z_DEMO_STATUS",
+    "description": "Doména pre stav demo objektu",
+    "type": "CHAR",
+    "length": 1,
+    "values": [
+      { "value": "A", "description": "Aktívny" },
+      { "value": "I", "description": "Inaktívny" },
+      { "value": "D", "description": "Zmazaný" }
+    ]
+  },
+  {
+    "system": "DEV",
+    "package": "Z_DEMO",
+    "objectType": "DTEL",
+    "name": "Z_DEMO_STATUS_DE",
+    "description": "Dátový prvok pre stav demo objektu",
+    "domain": "Z_DEMO_STATUS",
+    "type": "CHAR",
+    "length": 1,
+    "labels": {
+      "short": "Stav",
+      "medium": "Stav objektu",
+      "long": "Stav demo objektu"
+    }
+  },
+  {
+    "system": "DEV",
+    "package": "Z_DEMO",
+    "objectType": "TTYP",
+    "name": "Z_DEMO_STATUS_T",
+    "description": "Tabuľkový typ pre stavy",
+    "lineType": "Z_DEMO_STATUS_DE",
+    "accessMode": "STANDARD",
+    "keyType": "DEFAULT"
+  }
+]

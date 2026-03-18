@@ -262,6 +262,15 @@ fn delete_package(state: State<DbState>, system: String, pkg: String) -> Result<
 }
 
 #[tauri::command]
+fn delete_object(state: State<DbState>, system: String, pkg: String, name: String) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    conn.execute("DELETE FROM objects WHERE system = ? AND package = ? AND name = ?", [system, pkg, name]).map_err(|e| e.to_string())?;
+    // Also delete sub-objects
+    conn.execute("DELETE FROM objects WHERE system = ? AND package = ? AND parent_name = ?", [system, pkg, name]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_db_path(state: State<DbState>) -> Result<String, String> {
     let conn = state.0.lock().unwrap();
     Ok(conn.path().unwrap_or("").to_string())
@@ -297,6 +306,7 @@ fn main() {
         import_objects, 
         clear_database,
         delete_package,
+        delete_object,
         get_db_path,
         set_db_path
     ])
