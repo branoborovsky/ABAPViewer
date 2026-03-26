@@ -81,6 +81,21 @@ fn init_db(conn: &Connection) -> rusqlite::Result<()> {
         [],
     );
 
+    let _ = conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS objects_ad AFTER DELETE ON objects BEGIN
+          INSERT INTO objects_fts(objects_fts, rowid, name, description, content) VALUES('delete', old.id, old.name, old.description, old.content);
+        END",
+        [],
+    );
+
+    let _ = conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS objects_au AFTER UPDATE ON objects BEGIN
+          INSERT INTO objects_fts(objects_fts, rowid, name, description, content) VALUES('delete', old.id, old.name, old.description, old.content);
+          INSERT INTO objects_fts(rowid, name, description, content) VALUES (new.id, new.name, new.description, new.content);
+        END",
+        [],
+    );
+
     Ok(())
 }
 
@@ -258,6 +273,7 @@ fn import_objects(state: State<DbState>, objects: Vec<serde_json::Value>) -> Res
 fn clear_database(state: State<DbState>) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
     conn.execute("DELETE FROM objects", []).map_err(|e| e.to_string())?;
+    let _ = conn.execute("DELETE FROM objects_fts", []);
     Ok(())
 }
 

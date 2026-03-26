@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, 
   Package, 
@@ -10,6 +10,7 @@ import {
   Database,
   Upload,
   Terminal,
+  Type,
   Cpu,
   Trash2,
   ArrowLeft,
@@ -17,9 +18,11 @@ import {
   AlertCircle,
   Loader2,
   Zap,
+  MessageSquare,
   Code2,
   Settings,
-  X
+  X,
+  Globe
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -35,6 +38,20 @@ import ABAP_EXPORT_SCRIPT from './exporter.abap?raw';
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const decodeBase64 = (str: string) => {
+  if (!str) return "";
+  try {
+    const binary = window.atob(str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  } catch (e) {
+    return str;
+  }
+};
 
 interface ABAPObject {
   system: string;
@@ -65,6 +82,14 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [importLogs, setImportLogs] = useState<string[]>([]);
+  const [currentProcessingFile, setCurrentProcessingFile] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [importLogs]);
   const [importStats, setImportStats] = useState({ total: 0, current: 0, success: 0, error: 0, phase: '' });
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [deleteConfirmation, setDeleteConfirmation] = useState<{system: string, pkg: string, name?: string} | null>(null);
@@ -77,6 +102,8 @@ export default function App() {
   const [dbPath, setDbPath] = useState('');
   const [newDbPath, setNewDbPath] = useState('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [confirmClearCheckbox, setConfirmClearCheckbox] = useState(false);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -167,16 +194,37 @@ export default function App() {
 
   const isTauri = !!(window as any).__TAURI_INTERNALS__;
 
-  const clearDatabase = async () => {
-    if (!confirm("Naozaj chcete vymazať celú databázu?")) return;
+  const clearDatabase = () => {
+    setIsClearModalOpen(true);
+    setConfirmClearCheckbox(false);
+  };
+
+  const handleActualClear = async () => {
+    if (!confirmClearCheckbox) return;
+    
     try {
-      const res = await fetch('/api/clear', { method: 'POST' });
-      if (res.ok) {
+      if (isTauri) {
+        await invoke('clear_database');
         setTreeData([]);
         setSelectedObject(null);
+        setSearchResults([]);
+        setNavigationHistory([]);
+        setImportLogs([]);
+        setIsClearModalOpen(false);
+      } else {
+        const res = await fetch('/api/clear', { method: 'POST' });
+        if (res.ok) {
+          setTreeData([]);
+          setSelectedObject(null);
+          setSearchResults([]);
+          setNavigationHistory([]);
+          setImportLogs([]);
+          setIsClearModalOpen(false);
+        }
       }
     } catch (err) {
       console.error("Failed to clear database", err);
+      alert("Chyba pri vymazávaní databázy.");
     }
   };
 
@@ -247,6 +295,10 @@ export default function App() {
     }
   };
 
+  const handleObjectClick = (name: string, type?: string) => {
+    if (name) selectObject(name);
+  };
+
   const goBack = () => {
     if (navigationHistory.length === 0) return;
     const prevName = navigationHistory[navigationHistory.length - 1];
@@ -276,6 +328,7 @@ export default function App() {
     if (!file) return;
 
     setImportLogs([]);
+    setCurrentProcessingFile('');
     setImportStats({ total: 0, current: 0, success: 0, error: 0, phase: 'Otváram ZIP archív...' });
     setIsImporting(true);
     
@@ -289,31 +342,63 @@ export default function App() {
 
       for (const [filename, zipEntry] of jsonFiles) {
         setImportStats(prev => ({ ...prev, current: prev.current + 1 }));
+        setCurrentProcessingFile(filename);
         const text = await zipEntry.async('string');
         try {
           const obj = JSON.parse(text);
           objects.push(obj);
           setImportStats(prev => ({ ...prev, success: prev.success + 1 }));
-          setImportLogs(prev => [...prev.slice(-8), `[OK] ${filename}`]);
         } catch (e) {
           setImportStats(prev => ({ ...prev, error: prev.error + 1 }));
-          setImportLogs(prev => [...prev.slice(-8), `[CHYBA] ${filename}: Neplatný JSON`]);
+          setImportLogs(prev => [...prev.slice(-5000), `[CHYBA] ${filename}: Neplatný JSON`]);
         }
       }
 
       if (objects.length > 0) {
         setImportStats(prev => ({ ...prev, phase: 'Ukladám do databázy...' }));
-        setImportLogs(prev => [...prev, `Odosielam ${objects.length} objektov do DB...`]);
         
         // Flatten objects for both Web and Desktop to ensure consistent processing
         const flattened: any[] = [];
         objects.forEach(obj => {
           // 1. Main object
-          const searchableContent = (obj.source || "") + "\n" + (obj.definition || "") + "\n" + (obj.implementation || "") + "\n" + (obj.flowLogic || "");
+          const oType = obj.objectType || obj.type;
+          
+          // Handle Base64 encoding if present (especially for SIAC/HTML)
+          if (obj.encoding === 'base64') {
+            if (obj.source) obj.source = decodeBase64(obj.source);
+            if (obj.content) obj.content = decodeBase64(obj.content);
+            if (obj.definition) obj.definition = decodeBase64(obj.definition);
+            if (obj.implementation) obj.implementation = decodeBase64(obj.implementation);
+          }
+
+          let searchableContent = (obj.source || "") + "\n" + (obj.definition || "") + "\n" + (obj.implementation || "") + "\n" + (obj.flowLogic || "");
+          if (oType === 'DOMA') {
+            searchableContent += `\n${obj.dataType || obj.datatype || obj.type || ""} ${obj.length || obj.len || ""} ${obj.decimals || obj.dec || ""}`;
+            if (obj.fixedValues) {
+              searchableContent += "\n" + obj.fixedValues.map((v: any) => `${v.low || ""} ${v.text || ""}`).join(" ");
+            }
+          } else if (oType === 'DTEL') {
+            searchableContent += `\n${obj.domain || ""} ${obj.dataType || obj.datatype || obj.type || ""} ${obj.length || obj.len || ""}`;
+            const labels = obj.labels || obj.texts;
+            if (labels) {
+              searchableContent += "\n" + Object.values(labels).join(" ");
+            }
+          } else if (oType === 'TRAN') {
+            searchableContent += `\n${obj.program || ""} ${obj.screen || ""} ${obj.tcodeType || ""}`;
+          } else if (oType === 'TTYP') {
+            searchableContent += `\n${obj.lineType || ""} ${obj.accessMode || ""} ${obj.keyCategory || ""}`;
+          } else if (oType === 'MSAG') {
+            if (obj.messages) {
+              searchableContent += "\n" + obj.messages.map((m: any) => `${m.number || ""} ${m.text || ""}`).join(" ");
+            }
+          } else if (oType === 'SIAC') {
+            searchableContent += "\n" + (obj.source || obj.content || "");
+          }
+
           flattened.push({
             system: obj.system,
             package: obj.package,
-            type: obj.objectType || obj.type,
+            type: oType,
             name: obj.name,
             parent_name: null,
             description: obj.description || "",
@@ -381,13 +466,13 @@ export default function App() {
             body: JSON.stringify({ objects: flattened })
           });
         }
-        setImportLogs(prev => [...prev, "Databáza bola úspešne aktualizovaná."]);
         await fetchTree();
       } else {
-        setImportLogs(prev => [...prev, "Nenašli sa žiadne platné JSON objekty na import."]);
+        setImportStats(prev => ({ ...prev, phase: 'Žiadne dáta' }));
       }
       
       setImportStats(prev => ({ ...prev, phase: 'Dokončené' }));
+      setCurrentProcessingFile('');
     } catch (err) {
       console.error("Import failed", err);
       setImportLogs(prev => [...prev, `FATÁLNA CHYBA: ${err instanceof Error ? err.message : String(err)}`]);
@@ -507,6 +592,7 @@ export default function App() {
       else if (type === 'DOMA') category = 'Domény';
       else if (type === 'MSAG') category = 'Správy';
       else if (type === 'TRAN') category = 'Transakcie';
+      else if (type === 'SIAC') category = 'HTML Šablóny';
       else if (type === 'SHLP') category = 'Search Helpy';
       else if (type === 'VIEW') category = 'Pohľady';
       else if (type === 'ENQU') category = 'Zámky';
@@ -532,8 +618,22 @@ export default function App() {
       // Find parent in any category within the same package
       let found = false;
       for (const cat in parentPkg) {
-        if (parentPkg[cat][pName]) {
-          parentPkg[cat][pName].children.push(obj);
+        const parent = parentPkg[cat][pName];
+        if (parent) {
+          const type = (parent.type || '').toUpperCase().trim();
+          if (type === 'PROG' || type === 'FUGR') {
+            const subType = (obj.type || '').toUpperCase().trim();
+            let folderName = 'Ostatné';
+            if (subType === 'DYNP') folderName = 'Dynpra';
+            else if (subType === 'REPS') folderName = 'Includes';
+            else if (subType === 'FUNC') folderName = 'Funkčné moduly';
+            
+            if (!parent.groupedChildren) parent.groupedChildren = {};
+            if (!parent.groupedChildren[folderName]) parent.groupedChildren[folderName] = [];
+            parent.groupedChildren[folderName].push(obj);
+          } else {
+            parent.children.push(obj);
+          }
           found = true;
           break;
         }
@@ -687,15 +787,16 @@ export default function App() {
                                           selectedObject?.name === obj.name && "bg-[#37373d] text-white"
                                         )}
                                         onClick={() => {
-                                          if (obj.children.length > 0) toggleNode(`obj-${obj.system}-${obj.package}-${obj.name}`);
+                                          if (obj.children.length > 0 || (obj.groupedChildren && Object.keys(obj.groupedChildren).length > 0)) toggleNode(`obj-${obj.system}-${obj.package}-${obj.name}`);
                                           selectObject(obj.name);
                                         }}
                                       >
                                         <div className="w-3 flex justify-center">
-                                          {obj.children.length > 0 && (expandedNodes.has(`obj-${obj.system}-${obj.package}-${obj.name}`) ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />)}
+                                          {(obj.children.length > 0 || (obj.groupedChildren && Object.keys(obj.groupedChildren).length > 0)) && (expandedNodes.has(`obj-${obj.system}-${obj.package}-${obj.name}`) ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />)}
                                         </div>
                                         {obj.type === 'TABL' ? <TableIcon className="w-3.5 h-3.5 text-green-500" /> : 
                                          obj.type === 'CLAS' ? <Cpu className="w-3.5 h-3.5 text-purple-400" /> :
+                                         obj.type === 'SIAC' ? <Globe className="w-3.5 h-3.5 text-blue-400" /> :
                                          <FileCode className="w-3.5 h-3.5 text-blue-300" />}
                                         <div className="flex flex-col min-w-0 flex-1">
                                           <span className="truncate group-hover:text-white leading-tight">{obj.name}</span>
@@ -710,29 +811,71 @@ export default function App() {
                                         </button>
                                       </div>
 
-                                      {expandedNodes.has(`obj-${obj.system}-${obj.package}-${obj.name}`) && obj.children.length > 0 && (
+                                      {expandedNodes.has(`obj-${obj.system}-${obj.package}-${obj.name}`) && (obj.children.length > 0 || (obj.groupedChildren && Object.keys(obj.groupedChildren).length > 0)) && (
                                         <div className="ml-6 border-l border-[#444]">
-                                          {obj.children.sort((a: any, b: any) => a.name.localeCompare(b.name)).map((child: any) => (
-                                            <div 
-                                              key={`${child.system}-${child.package}-${child.name}`}
-                                              className={cn(
-                                                "flex items-center gap-2 py-1 px-3 hover:bg-[#2a2d2e] cursor-pointer rounded m-0.5 text-[12px]",
-                                                selectedObject?.name === child.name && "bg-[#37373d] text-white"
-                                              )}
-                                              onClick={() => selectObject(child.name)}
-                                            >
-                                              <div className="w-3 flex justify-center">
-                                                {child.type === 'METH' ? <Zap className="w-2.5 h-2.5 text-yellow-500" /> : 
-                                                 child.type === 'FUNC' ? <Code2 className="w-2.5 h-2.5 text-blue-400" /> :
-                                                 <div className="w-1 h-1 rounded-full bg-gray-500" />}
+                                          {obj.groupedChildren ? (
+                                            Object.entries(obj.groupedChildren).sort().map(([folderName, children]: any) => (
+                                              <div key={folderName}>
+                                                <div 
+                                                  className="flex items-center gap-1 py-1 px-1 hover:bg-[#2a2d2e] cursor-pointer rounded opacity-80 group"
+                                                  onClick={() => toggleNode(`folder-${obj.system}-${obj.package}-${obj.name}-${folderName}`)}
+                                                >
+                                                  <div className="w-4 flex justify-center">
+                                                    {expandedNodes.has(`folder-${obj.system}-${obj.package}-${obj.name}-${folderName}`) ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                                  </div>
+                                                  <Folder className="w-4 h-4 text-gray-400" />
+                                                  <span className="text-[10px] uppercase tracking-wider group-hover:text-white">{folderName}</span>
+                                                </div>
+                                                {expandedNodes.has(`folder-${obj.system}-${obj.package}-${obj.name}-${folderName}`) && (
+                                                  <div className="ml-4 border-l border-[#333333]">
+                                                    {children.sort((a: any, b: any) => a.name.localeCompare(b.name)).map((child: any) => (
+                                                      <div 
+                                                        key={`${child.system}-${child.package}-${child.name}`}
+                                                        className={cn(
+                                                          "flex items-center gap-2 py-1 px-3 hover:bg-[#2a2d2e] cursor-pointer rounded m-0.5 text-[12px]",
+                                                          selectedObject?.name === child.name && "bg-[#37373d] text-white"
+                                                        )}
+                                                        onClick={() => selectObject(child.name)}
+                                                      >
+                                                        <div className="w-3 flex justify-center">
+                                                          {child.type === 'METH' ? <Zap className="w-2.5 h-2.5 text-yellow-500" /> : 
+                                                           child.type === 'FUNC' ? <Code2 className="w-2.5 h-2.5 text-blue-400" /> :
+                                                           <div className="w-1 h-1 rounded-full bg-gray-500" />}
+                                                        </div>
+                                                        <span className="text-[9px] font-mono text-[#666] w-8 uppercase flex-shrink-0">{child.type}</span>
+                                                        <div className="flex flex-col min-w-0 flex-1">
+                                                          <span className="truncate leading-tight">{child.name}</span>
+                                                          {child.description && <span className="text-[9px] text-[#858585] truncate leading-tight">{child.description}</span>}
+                                                        </div>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                )}
                                               </div>
-                                              <span className="text-[9px] font-mono text-[#666] w-8 uppercase flex-shrink-0">{child.type}</span>
-                                              <div className="flex flex-col min-w-0 flex-1">
-                                                <span className="truncate leading-tight">{child.name}</span>
-                                                {child.description && <span className="text-[9px] text-[#858585] truncate leading-tight">{child.description}</span>}
+                                            ))
+                                          ) : (
+                                            obj.children.sort((a: any, b: any) => a.name.localeCompare(b.name)).map((child: any) => (
+                                              <div 
+                                                key={`${child.system}-${child.package}-${child.name}`}
+                                                className={cn(
+                                                  "flex items-center gap-2 py-1 px-3 hover:bg-[#2a2d2e] cursor-pointer rounded m-0.5 text-[12px]",
+                                                  selectedObject?.name === child.name && "bg-[#37373d] text-white"
+                                                )}
+                                                onClick={() => selectObject(child.name)}
+                                              >
+                                                <div className="w-3 flex justify-center">
+                                                  {child.type === 'METH' ? <Zap className="w-2.5 h-2.5 text-yellow-500" /> : 
+                                                   child.type === 'FUNC' ? <Code2 className="w-2.5 h-2.5 text-blue-400" /> :
+                                                   <div className="w-1 h-1 rounded-full bg-gray-500" />}
+                                                </div>
+                                                <span className="text-[9px] font-mono text-[#666] w-8 uppercase flex-shrink-0">{child.type}</span>
+                                                <div className="flex flex-col min-w-0 flex-1">
+                                                  <span className="truncate leading-tight">{child.name}</span>
+                                                  {child.description && <span className="text-[9px] text-[#858585] truncate leading-tight">{child.description}</span>}
+                                                </div>
                                               </div>
-                                            </div>
-                                          ))}
+                                            ))
+                                          )}
                                         </div>
                                       )}
                                     </div>
@@ -825,13 +968,251 @@ export default function App() {
                             </td>
                             <td className="p-3 border-b border-[#333333] text-blue-400/80 font-mono text-[11px]">{f.dataElement || '-'}</td>
                             <td className="p-3 border-b border-[#333333] text-purple-400/80 font-mono text-[11px]">{f.domain || '-'}</td>
-                            <td className="p-3 border-b border-[#333333] text-[#ccc]">{f.type}</td>
-                            <td className="p-3 border-b border-[#333333] text-[#858585]">{f.length}</td>
+                            <td className="p-3 border-b border-[#333333] text-[#ccc]">{f.type || f.dataType || f.datatype || '-'}</td>
+                            <td className="p-3 border-b border-[#333333] text-[#858585]">{f.length || f.len || '-'}</td>
                             <td className="p-3 border-b border-[#333333] text-[#858585]">{f.description}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              ) : selectedObject.type === 'DOMA' ? (
+                <div className="p-6 space-y-8">
+                  <div className="flex items-center gap-2">
+                    <Database className="w-5 h-5 text-purple-500" />
+                    <h2 className="text-lg font-semibold text-white">Domain Details</h2>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-[#252526] p-4 rounded-lg border border-[#333333] space-y-4">
+                      <h3 className="text-xs font-bold text-[#858585] uppercase tracking-wider">Definition</h3>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Data Type</span>
+                          <span className="text-blue-400 font-mono">{selectedObject.raw_json?.dataType || selectedObject.raw_json?.datatype || selectedObject.raw_json?.type || selectedObject.raw_json?.DATATYPE || '-'}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Length</span>
+                          <span className="text-white font-mono">{selectedObject.raw_json?.length || selectedObject.raw_json?.len || selectedObject.raw_json?.LENG || '-'}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Decimals</span>
+                          <span className="text-white font-mono">{selectedObject.raw_json?.decimals || selectedObject.raw_json?.dec || selectedObject.raw_json?.DECIMALS || '0'}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Output Length</span>
+                          <span className="text-white font-mono">{selectedObject.raw_json?.outputLength || '-'}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Conv. Exit</span>
+                          <span className="text-amber-400 font-mono">{selectedObject.raw_json?.convexit || '-'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {selectedObject.raw_json?.fixedValues && selectedObject.raw_json.fixedValues.length > 0 && (
+                      <div className="bg-[#252526] p-4 rounded-lg border border-[#333333] space-y-4">
+                        <h3 className="text-xs font-bold text-[#858585] uppercase tracking-wider">Fixed Values</h3>
+                        <div className="max-h-64 overflow-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-left text-[#666] border-b border-[#333]">
+                                <th className="pb-2">Value</th>
+                                <th className="pb-2">Description</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {selectedObject.raw_json.fixedValues.map((v: any, i: number) => (
+                                <tr key={i} className="border-b border-[#333]/50">
+                                  <td className="py-1.5 font-mono text-blue-300">{v.low}{v.high ? ` - ${v.high}` : ''}</td>
+                                  <td className="py-1.5 text-[#858585]">{v.text}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : selectedObject.type === 'DTEL' ? (
+                <div className="p-6 space-y-8">
+                  <div className="flex items-center gap-2">
+                    <Type className="w-5 h-5 text-blue-500" />
+                    <h2 className="text-lg font-semibold text-white">Data Element Details</h2>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-[#252526] p-4 rounded-lg border border-[#333333] space-y-4">
+                      <h3 className="text-xs font-bold text-[#858585] uppercase tracking-wider">Definition</h3>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Domain</span>
+                          <span className="text-purple-400 font-mono cursor-pointer hover:underline" onClick={() => handleObjectClick(selectedObject.raw_json?.domain, 'DOMA')}>
+                            {selectedObject.raw_json?.domain || '-'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Data Type</span>
+                          <span className="text-blue-400 font-mono">{selectedObject.raw_json?.dataType || selectedObject.raw_json?.datatype || selectedObject.raw_json?.type || selectedObject.raw_json?.DATATYPE || '-'}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Length</span>
+                          <span className="text-white font-mono">{selectedObject.raw_json?.length || selectedObject.raw_json?.len || selectedObject.raw_json?.LENG || '-'}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Decimals</span>
+                          <span className="text-white font-mono">{selectedObject.raw_json?.decimals || selectedObject.raw_json?.dec || selectedObject.raw_json?.DECIMALS || '0'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#252526] p-4 rounded-lg border border-[#333333] space-y-4">
+                      <h3 className="text-xs font-bold text-[#858585] uppercase tracking-wider">Field Labels</h3>
+                      <div className="space-y-3">
+                        {['short', 'medium', 'long', 'heading'].map(label => (
+                          <div key={label} className="space-y-1">
+                            <span className="text-[10px] text-[#666] uppercase">{label}</span>
+                            <div className="text-sm text-white bg-[#1e1e1e] p-2 rounded border border-[#333]">
+                              {selectedObject.raw_json?.labels?.[label] || selectedObject.raw_json?.texts?.[label] || '-'}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : selectedObject.type === 'TRAN' ? (
+                <div className="p-6 space-y-8">
+                  <div className="flex items-center gap-2">
+                    <Terminal className="w-5 h-5 text-amber-500" />
+                    <h2 className="text-lg font-semibold text-white">Transaction Details</h2>
+                  </div>
+
+                  <div className="max-w-2xl bg-[#252526] p-6 rounded-lg border border-[#333333] space-y-6">
+                    <div className="grid grid-cols-1 gap-6">
+                      <div className="space-y-1">
+                        <span className="text-xs font-bold text-[#858585] uppercase tracking-wider">Transaction Code</span>
+                        <div className="text-2xl font-mono text-amber-500">{selectedObject.name}</div>
+                      </div>
+                      
+                      <div className="h-px bg-[#333333]" />
+
+                      <div className="grid grid-cols-2 gap-8">
+                        <div className="space-y-1">
+                          <span className="text-xs font-bold text-[#858585] uppercase tracking-wider">Program</span>
+                          <div className="text-blue-400 font-mono cursor-pointer hover:underline" onClick={() => handleObjectClick(selectedObject.raw_json?.program, 'PROG')}>
+                            {selectedObject.raw_json?.program || '-'}
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-xs font-bold text-[#858585] uppercase tracking-wider">Screen Number</span>
+                          <div className="text-white font-mono">{selectedObject.raw_json?.screen || '-'}</div>
+                        </div>
+                      </div>
+
+                      {selectedObject.raw_json?.tcodeType && (
+                        <div className="space-y-1">
+                          <span className="text-xs font-bold text-[#858585] uppercase tracking-wider">Transaction Type</span>
+                          <div className="text-[#ccc]">{selectedObject.raw_json.tcodeType}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : selectedObject.type === 'TTYP' ? (
+                <div className="p-6 space-y-8">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-5 h-5 text-blue-400" />
+                    <h2 className="text-lg font-semibold text-white">Table Type Details</h2>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-[#252526] p-4 rounded-lg border border-[#333333] space-y-4">
+                      <h3 className="text-xs font-bold text-[#858585] uppercase tracking-wider">Line Type</h3>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Line Type</span>
+                          <span className="text-blue-400 font-mono cursor-pointer hover:underline" onClick={() => handleObjectClick(selectedObject.raw_json?.lineType)}>
+                            {selectedObject.raw_json?.lineType || '-'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Kind</span>
+                          <span className="text-white">{selectedObject.raw_json?.lineTypeKind || '-'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#252526] p-4 rounded-lg border border-[#333333] space-y-4">
+                      <h3 className="text-xs font-bold text-[#858585] uppercase tracking-wider">Attributes</h3>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Access Mode</span>
+                          <span className="text-amber-400">{selectedObject.raw_json?.accessMode || '-'}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#858585]">Key Category</span>
+                          <span className="text-white">{selectedObject.raw_json?.keyCategory || '-'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : selectedObject.type === 'MSAG' ? (
+                <div className="p-6 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="w-5 h-5 text-red-400" />
+                      <h2 className="text-lg font-semibold text-white">Message Class</h2>
+                    </div>
+                    {selectedObject.raw_json?.masterLanguage && (
+                      <div className="text-xs text-[#858585]">
+                        Master Language: <span className="text-blue-400 font-mono">{selectedObject.raw_json.masterLanguage}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-[#333333] overflow-hidden">
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="bg-[#252526] text-left text-[#858585] uppercase text-[10px] tracking-wider">
+                          <th className="p-3 border-b border-[#333333] w-20">Number</th>
+                          <th className="p-3 border-b border-[#333333]">Message Text</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedObject?.raw_json?.messages?.map((m: any) => (
+                          <tr key={m.number} className="hover:bg-[#2a2d2e] transition-colors">
+                            <td className="p-3 border-b border-[#333333] font-mono text-amber-500">{m.number}</td>
+                            <td className="p-3 border-b border-[#333333] text-[#ccc]">
+                              {m.text}
+                              {m.selfExplanatory && <span className="ml-2 text-[10px] text-green-500 bg-green-500/10 px-1.5 py-0.5 rounded border border-green-500/20 uppercase tracking-tighter">Self-explanatory</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : selectedObject.type === 'SIAC' ? (
+                <div className="flex flex-col h-full">
+                  <div className="p-4 border-b border-[#333333] flex items-center justify-between bg-[#252526]">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-blue-400" />
+                      <span className="text-sm font-medium text-white">HTML Šablóna: {selectedObject.name}</span>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-auto">
+                    <SyntaxHighlighter 
+                      language="xml" 
+                      style={vscDarkPlus}
+                      customStyle={{ margin: 0, padding: '2rem', fontSize: '12px', background: 'transparent' }}
+                      showLineNumbers
+                    >
+                      {selectedObject.raw_json?.source || selectedObject.raw_json?.content || ""}
+                    </SyntaxHighlighter>
                   </div>
                 </div>
               ) : (
@@ -1039,7 +1420,7 @@ export default function App() {
 
       {isImporting && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[100] p-6">
-          <div className="bg-[#252526] rounded-xl shadow-2xl border border-[#454545] flex flex-col max-w-2xl w-full max-h-[80vh] overflow-hidden">
+          <div className="bg-[#252526] rounded-xl shadow-2xl border border-[#454545] flex flex-col max-w-2xl w-full max-h-[80vh] overflow-hidden min-h-0">
             {/* Header */}
             <div className="p-6 border-b border-[#333333] flex items-center justify-between bg-[#2d2d2d]">
               <div className="flex items-center gap-3">
@@ -1088,20 +1469,34 @@ export default function App() {
             </div>
 
             {/* Logs Area */}
-            <div className="flex-1 p-6 overflow-hidden flex flex-col">
-              <div className="flex items-center gap-2 mb-2 text-[#858585]">
-                <Terminal className="w-4 h-4" />
-                <span className="text-xs font-bold uppercase tracking-wider">Protokol spracovania</span>
-              </div>
-              <div className="flex-1 bg-[#1e1e1e] rounded border border-[#333] p-4 font-mono text-[11px] overflow-y-auto space-y-1">
-                {importLogs.map((log, idx) => (
-                  <div key={idx} className={cn(
-                    log.includes('[CHYBA]') || log.includes('FATÁLNA') ? "text-red-400" : 
-                    log.includes('[OK]') ? "text-green-400/70" : "text-[#858585]"
-                  )}>
-                    {log}
+            <div className="flex-1 p-6 overflow-hidden flex flex-col min-h-0">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-[#858585]">
+                  <Terminal className="w-4 h-4" />
+                  <span className="text-xs font-bold uppercase tracking-wider">Protokol spracovania</span>
+                </div>
+                {currentProcessingFile && importStats.phase !== 'Dokončené' && (
+                  <div className="text-[10px] font-mono text-blue-400 truncate max-w-[300px]">
+                    Spracovávam: {currentProcessingFile}
                   </div>
-                ))}
+                )}
+              </div>
+              <div 
+                ref={scrollRef}
+                className="flex-1 bg-[#1e1e1e] rounded border border-[#333] p-4 font-mono text-[11px] overflow-y-auto space-y-1 min-h-0"
+              >
+                {importLogs.length === 0 ? (
+                  <div className="text-[#454545] italic">Žiadne chyby počas spracovania...</div>
+                ) : (
+                  importLogs.map((log, idx) => (
+                    <div key={idx} className={cn(
+                      log.includes('[CHYBA]') || log.includes('FATÁLNA') ? "text-red-400" : 
+                      log.includes('[OK]') ? "text-green-400/70" : "text-[#858585]"
+                    )}>
+                      {log}
+                    </div>
+                  ))
+                )}
                 {importStats.phase !== 'Dokončené' && importStats.phase !== 'Chyba' && (
                   <div className="animate-pulse text-blue-400">...</div>
                 )}
@@ -1268,6 +1663,72 @@ export default function App() {
               >
                 {isSavingSettings ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 Uložiť nastavenia
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isClearModalOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+          <div className="bg-[#252526] border border-red-900/50 rounded-lg shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="p-4 border-b border-[#333333] flex items-center justify-between bg-red-950/20">
+              <div className="flex items-center gap-2 font-bold text-red-400">
+                <AlertCircle className="w-5 h-5" />
+                <span>Kritická operácia</span>
+              </div>
+              <button 
+                onClick={() => setIsClearModalOpen(false)}
+                className="p-1 hover:bg-red-900/20 rounded text-[#858585] hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="text-center space-y-2">
+                <h3 className="text-lg font-semibold text-white">Vymazať celú databázu?</h3>
+                <p className="text-sm text-[#858585]">
+                  Táto akcia nenávratne odstráni všetky importované ABAP objekty, balíčky a systémy z vašej lokálnej databázy.
+                </p>
+              </div>
+
+              <div className="bg-red-950/10 border border-red-900/20 p-4 rounded-lg space-y-4">
+                <label className="flex items-start gap-3 cursor-pointer group">
+                  <div className="pt-0.5">
+                    <input 
+                      type="checkbox" 
+                      checked={confirmClearCheckbox}
+                      onChange={(e) => setConfirmClearCheckbox(e.target.checked)}
+                      className="w-4 h-4 rounded border-[#333333] bg-[#3c3c3c] text-red-600 focus:ring-red-600 focus:ring-offset-[#1e1e1e]"
+                    />
+                  </div>
+                  <span className="text-sm text-[#cccccc] group-hover:text-white transition-colors">
+                    Rozumiem, že táto operácia je trvalá a dáta nebude možné obnoviť.
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-[#333333] flex justify-end gap-3 bg-[#2d2d2d]">
+              <button 
+                onClick={() => setIsClearModalOpen(false)}
+                className="px-4 py-2 text-sm text-[#cccccc] hover:text-white transition-colors"
+              >
+                Zrušiť
+              </button>
+              <button 
+                onClick={handleActualClear}
+                disabled={!confirmClearCheckbox}
+                className={cn(
+                  "px-6 py-2 rounded-md transition-all font-bold flex items-center gap-2",
+                  confirmClearCheckbox 
+                    ? "bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-900/20" 
+                    : "bg-[#333333] text-[#666666] cursor-not-allowed"
+                )}
+              >
+                <Trash2 className="w-4 h-4" />
+                Vymazať všetko
               </button>
             </div>
           </div>
