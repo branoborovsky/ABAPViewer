@@ -293,6 +293,167 @@ fn delete_object(state: State<DbState>, system: String, pkg: String, name: Strin
     Ok(())
 }
 
+fn get_base_dir() -> std::path::PathBuf {
+    let home = if cfg!(windows) {
+        std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME"))
+    } else {
+        std::env::var("HOME")
+    };
+
+    let mut p = std::path::PathBuf::from(home.unwrap_or_else(|_| ".".to_string()));
+    p.push(".abap_viewer_databases");
+    
+    if !p.exists() {
+        let _ = std::fs::create_dir_all(&p);
+    }
+    p
+}
+
+fn get_config_path() -> std::path::PathBuf {
+    let mut p = get_base_dir();
+    p.push("config.json");
+    p
+}
+
+fn get_known_databases() -> Vec<String> {
+    let path = get_config_path();
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(list) = serde_json::from_str::<Vec<String>>(&content) {
+                return list;
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn add_known_database(db_path: &str) {
+    let mut known = get_known_databases();
+    if !known.contains(&db_path.to_string()) {
+        known.push(db_path.to_string());
+        let path = get_config_path();
+        let _ = std::fs::write(path, serde_json::to_string_pretty(&known).unwrap_or_default());
+    }
+}
+
+fn remove_known_database(db_path: &str) {
+    let known = get_known_databases();
+    let new_known: Vec<String> = known.into_iter().filter(|k| k != db_path).collect();
+    let path = get_config_path();
+    let _ = std::fs::write(path, serde_json::to_string_pretty(&new_known).unwrap_or_default());
+}
+
+#[tauri::command]
+fn ls_fs(path: Option<String>) -> Result<serde_json::Value, String> {
+    let target_path = path.unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_default().to_str().unwrap_or_default().to_string()
+    });
+    
+    let target = std::path::Path::new(&target_path);
+    if !target.exists() {
+        return Err("Path not found".to_string());
+    }
+    
+    let mut items = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(target) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let p = entry.path();
+                let name = p.file_name().unwrap_or_default().to_str().unwrap_or_default().to_string();
+                if name.starts_with('.') { continue; }
+                
+                let mut item = serde_json::Map::new();
+                item.insert("name".to_string(), serde_json::Value::from(name));
+                item.insert("path".to_string(), serde_json::Value::from(p.to_str().unwrap_or_default().to_string()));
+                item.insert("isDirectory".to_string(), serde_json::Value::from(p.is_dir()));
+                items.push(serde_json::Value::Object(item));
+            }
+        }
+    }
+    
+    items.sort_by(|a, b| {
+        let a_is_dir = a["isDirectory"].as_bool().unwrap_or(false);
+        let b_is_dir = b["isDirectory"].as_bool().unwrap_or(false);
+        if a_is_dir && !b_is_dir { return std::cmp::Ordering::Less; }
+        if !a_is_dir && b_is_dir { return std::cmp::Ordering::Greater; }
+        a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+    });
+
+    let mut res = serde_json::Map::new();
+    res.insert("currentPath".to_string(), serde_json::Value::from(target_path.clone()));
+    res.insert("parentPath".to_string(), serde_json::Value::from(target.parent().map_or(target_path.clone(), |p| p.to_str().unwrap_or(&target_path).to_string())));
+    res.insert("items".to_string(), serde_json::Value::Array(items));
+    res.insert("sep".to_string(), serde_json::Value::from(std::path::MAIN_SEPARATOR.to_string()));
+    
+    Ok(serde_json::Value::Object(res))
+}
+
+#[tauri::command]
+fn get_databases(state: State<DbState>) -> Result<Vec<serde_json::Value>, String> {
+    let db_dir = get_base_dir();
+    let mut dbs = Vec::new();
+    
+    let conn = state.0.lock().unwrap();
+    let current_db_path = conn.path().unwrap_or("").to_string();
+
+    let mut seen_paths = std::collections::HashSet::new();
+
+    // 1. Scan base directory
+    if let Ok(entries) = std::fs::read_dir(&db_dir) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "db") {
+                    if let Some(p) = path.to_str() {
+                        let p_str = p.to_string();
+                        let mut db_info = serde_json::Map::new();
+                        db_info.insert("name".to_string(), serde_json::Value::from(path.file_name().unwrap().to_str().unwrap().to_string()));
+                        db_info.insert("path".to_string(), serde_json::Value::from(p_str.clone()));
+                        db_info.insert("active".to_string(), serde_json::Value::from(p_str == current_db_path));
+                        dbs.push(serde_json::Value::Object(db_info));
+                        seen_paths.insert(p_str);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Add known external databases
+    for p_str in get_known_databases() {
+        if seen_paths.contains(&p_str) { continue; }
+        let path = std::path::Path::new(&p_str);
+        if path.exists() {
+            let mut db_info = serde_json::Map::new();
+            db_info.insert("name".to_string(), serde_json::Value::from(path.file_name().map_or("external.db", |n| n.to_str().unwrap_or("external.db")).to_string()));
+            db_info.insert("path".to_string(), serde_json::Value::from(p_str.clone()));
+            db_info.insert("active".to_string(), serde_json::Value::from(p_str == current_db_path));
+            dbs.push(serde_json::Value::Object(db_info));
+            seen_paths.insert(p_str);
+        }
+    }
+
+    // 3. Ensure active DB is in the list (if not already)
+    if !current_db_path.is_empty() && !seen_paths.contains(&current_db_path) {
+        let path = std::path::Path::new(&current_db_path);
+        let mut db_info = serde_json::Map::new();
+        db_info.insert("name".to_string(), serde_json::Value::from(path.file_name().map_or("active.db", |n| n.to_str().unwrap_or("active.db")).to_string()));
+        db_info.insert("path".to_string(), serde_json::Value::from(current_db_path.clone()));
+        db_info.insert("active".to_string(), serde_json::Value::from(true));
+        dbs.push(serde_json::Value::Object(db_info));
+    }
+
+    Ok(dbs)
+}
+
+#[tauri::command]
+fn delete_database(path: String) -> Result<(), String> {
+    if std::path::Path::new(&path).exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    remove_known_database(&path);
+    Ok(())
+}
+
 #[tauri::command]
 fn get_db_path(state: State<DbState>) -> Result<String, String> {
     let conn = state.0.lock().unwrap();
@@ -303,18 +464,32 @@ fn get_db_path(state: State<DbState>) -> Result<String, String> {
 fn set_db_path(state: State<DbState>, path: String) -> Result<String, String> {
     let mut conn_guard = state.0.lock().unwrap();
     
+    // Ensure parent directory exists
+    let path_buf = std::path::PathBuf::from(&path);
+    if let Some(parent) = path_buf.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+
     // Open new connection
     let new_conn = Connection::open(&path).map_err(|e| e.to_string())?;
     init_db(&new_conn).map_err(|e| e.to_string())?;
     
     // Replace old connection
     *conn_guard = new_conn;
+
+    // Persist if external
+    let db_dir = get_base_dir();
+    if !path.starts_with(db_dir.to_str().unwrap_or("")) {
+        add_known_database(&path);
+    }
     
     Ok(path)
 }
 
 fn main() {
-  let mut db_path = std::env::current_dir().expect("failed to get current directory");
+  let mut db_path = get_base_dir();
   db_path.push("abap_viewer.db");
   
   let conn = Connection::open(&db_path).expect("failed to open database");
@@ -331,7 +506,10 @@ fn main() {
         delete_package,
         delete_object,
         get_db_path,
-        set_db_path
+        set_db_path,
+        get_databases,
+        delete_database,
+        ls_fs
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -22,7 +22,13 @@ import {
   Code2,
   Settings,
   X,
-  Globe
+  Globe,
+  Plus,
+  FolderPlus,
+  Check,
+  Home,
+  ArrowUp,
+  File
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -74,6 +80,8 @@ SyntaxHighlighter.registerLanguage('sql', sql);
 SyntaxHighlighter.registerLanguage('xml', markup);
 SyntaxHighlighter.registerLanguage('xslt', markup);
 
+const isTauri = !!(window as any).__TAURI_INTERNALS__;
+
 export default function App() {
   const [treeData, setTreeData] = useState<ABAPObject[]>([]);
   const [selectedObject, setSelectedObject] = useState<FullObject | null>(null);
@@ -101,9 +109,19 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [dbPath, setDbPath] = useState('');
   const [newDbPath, setNewDbPath] = useState('');
+  const [databases, setDatabases] = useState<any[]>([]);
+  const [newDbName, setNewDbName] = useState('');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
   const [confirmClearCheckbox, setConfirmClearCheckbox] = useState(false);
+  const [dbToDelete, setDbToDelete] = useState<string | null>(null);
+  const [isDeletingDb, setIsDeletingDb] = useState(false);
+  const [isFileExplorerOpen, setIsFileExplorerOpen] = useState(false);
+  const [fsCurrentPath, setFsCurrentPath] = useState('');
+  const [fsItems, setFsItems] = useState<any[]>([]);
+  const [fsParentPath, setFsParentPath] = useState('');
+  const [fsSep, setFsSep] = useState('/');
+  const [fsLoading, setFsLoading] = useState(false);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -144,7 +162,153 @@ export default function App() {
   useEffect(() => {
     fetchTree();
     fetchSettings();
+    fetchDatabases();
   }, []);
+
+  const fetchDatabases = async () => {
+    try {
+      if (isTauri) {
+        const dbs = await invoke('get_databases');
+        setDatabases(dbs as any[]);
+        return;
+      }
+      const res = await fetch('/api/databases');
+      if (res.ok) {
+        const data = await res.json();
+        setDatabases(data.databases);
+      }
+    } catch (err) {
+      console.error("Failed to fetch databases", err);
+    }
+  };
+
+  const browseFileSystem = async (path?: string) => {
+    setFsLoading(true);
+    try {
+      if (isTauri) {
+        const data = await invoke('ls_fs', { path }) as any;
+        setFsCurrentPath(data.currentPath);
+        setFsParentPath(data.parentPath);
+        setFsItems(data.items);
+        setFsSep(data.sep || '/');
+        setIsFileExplorerOpen(true);
+        return;
+      }
+      const url = `/api/fs/ls${path ? `?path=${encodeURIComponent(path)}` : ''}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setFsCurrentPath(data.currentPath);
+        setFsParentPath(data.parentPath);
+        setFsItems(data.items);
+        setFsSep(data.sep || '/');
+        setIsFileExplorerOpen(true);
+      }
+    } catch (err) {
+      console.error("Failed to browse file system", err);
+    } finally {
+      setFsLoading(false);
+    }
+  };
+
+  const switchDatabase = async (path: string) => {
+    try {
+      if (isTauri) {
+        await invoke('set_db_path', { path });
+        await fetchSettings();
+        await fetchDatabases();
+        await fetchTree();
+        setSelectedObject(null);
+        return;
+      }
+      const res = await fetch('/api/databases/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      if (res.ok) {
+        await fetchSettings();
+        await fetchDatabases();
+        await fetchTree();
+        setSelectedObject(null);
+      }
+    } catch (err) {
+      console.error("Failed to switch database", err);
+    }
+  };
+
+  const createDatabase = async () => {
+    if (!newDbName) return;
+    try {
+      if (isTauri) {
+        const dbName = newDbName.endsWith('.db') ? newDbName : `${newDbName}.db`;
+        try {
+          await invoke('set_db_path', { path: dbName });
+          setNewDbName('');
+          await fetchSettings();
+          await fetchDatabases();
+          await fetchTree();
+          setSelectedObject(null);
+        } catch (err: any) {
+          alert(`Chyba pri vytváraní databázy: ${err}`);
+        }
+        return;
+      }
+      const res = await fetch('/api/databases/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newDbName })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNewDbName('');
+        await fetchDatabases();
+        if (data.switched) {
+          await fetchSettings();
+          await fetchTree();
+          setSelectedObject(null);
+        }
+      } else {
+        const data = await res.json();
+        alert(data.error || "Chyba pri vytváraní databázy.");
+      }
+    } catch (err) {
+      console.error("Failed to create database", err);
+    }
+  };
+
+  const deleteDatabase = async (path: string) => {
+    setDbToDelete(path);
+  };
+
+  const confirmDeleteDatabase = async () => {
+    if (!dbToDelete) return;
+    setIsDeletingDb(true);
+    try {
+      if (isTauri) {
+        await invoke('delete_database', { path: dbToDelete });
+        await fetchDatabases();
+        setDbToDelete(null);
+        return;
+      }
+      const res = await fetch('/api/databases', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: dbToDelete })
+      });
+      if (res.ok) {
+        await fetchDatabases();
+        setDbToDelete(null);
+      } else {
+        const data = await res.json();
+        console.error("Delete failed", data.error);
+      }
+    } catch (err) {
+      console.error("Failed to delete database", err);
+    } finally {
+      setIsDeletingDb(false);
+    }
+  };
 
   const fetchSettings = async () => {
     try {
@@ -191,8 +355,6 @@ export default function App() {
       setIsSavingSettings(false);
     }
   };
-
-  const isTauri = !!(window as any).__TAURI_INTERNALS__;
 
   const clearDatabase = () => {
     setIsClearModalOpen(true);
@@ -1608,11 +1770,11 @@ export default function App() {
 
       {isSettingsOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-[#252526] border border-[#333333] rounded-lg shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+          <div className="bg-[#252526] border border-[#333333] rounded-lg shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
             <div className="p-4 border-b border-[#333333] flex items-center justify-between bg-[#2d2d2d]">
               <div className="flex items-center gap-2 font-bold text-white">
                 <Settings className="w-5 h-5 text-blue-400" />
-                <span>Nastavenia</span>
+                <span>Správa databáz</span>
               </div>
               <button 
                 onClick={() => setIsSettingsOpen(false)}
@@ -1622,47 +1784,243 @@ export default function App() {
               </button>
             </div>
             
-            <div className="p-6 space-y-6">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-[#cccccc] block">
-                  Cesta k databáze (SQLite)
+            <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
+              {/* Database List */}
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-[#858585] uppercase tracking-wider block">
+                  Dostupné databázy
                 </label>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={newDbPath}
-                    onChange={(e) => setNewDbPath(e.target.value)}
-                    className="flex-1 bg-[#3c3c3c] border border-[#333333] rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
-                    placeholder="napr. abap_viewer.db"
-                  />
+                <div className="space-y-2">
+                  {databases.map((db) => (
+                    <div 
+                      key={db.path}
+                      className={cn(
+                        "p-3 rounded border flex items-center justify-between group transition-all",
+                        db.active 
+                          ? "bg-blue-500/10 border-blue-500/50" 
+                          : "bg-[#1e1e1e] border-[#333333] hover:border-[#444444]"
+                      )}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Database className={cn("w-4 h-4", db.active ? "text-blue-400" : "text-[#666]")} />
+                        <div className="flex flex-col min-w-0">
+                          <span className={cn("text-sm font-medium truncate", db.active ? "text-white" : "text-[#cccccc]")}>
+                            {db.name}
+                          </span>
+                          <span className="text-[10px] text-[#666] truncate font-mono">
+                            {db.path}
+                          </span>
+                        </div>
+                      </div>
+                      {db.active ? (
+                        <Check className="w-4 h-4 text-blue-400 shrink-0" />
+                      ) : (
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                          <button 
+                            onClick={() => switchDatabase(db.path)}
+                            className="px-2 py-1 bg-[#333] hover:bg-[#444] text-[10px] text-white rounded transition-all"
+                          >
+                            Prepnúť
+                          </button>
+                          <button 
+                            onClick={() => deleteDatabase(db.path)}
+                            className="p-1.5 bg-red-900/20 hover:bg-red-900/40 text-red-400 rounded transition-all"
+                            title="Vymazať databázu"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <p className="text-xs text-[#858585]">
-                  Aktuálna cesta: <span className="text-[#cccccc] font-mono">{dbPath}</span>
-                </p>
               </div>
 
-              <div className="bg-[#1e1e1e] p-3 rounded border border-[#333333] text-xs text-[#858585] space-y-2">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
-                  <p>Zmena cesty k databáze vytvorí nový súbor alebo sa pripojí k existujúcemu na danej ceste.</p>
+              {/* Create or Add Database */}
+              <div className="space-y-3 pt-4 border-t border-[#333333]">
+                <label className="text-xs font-bold text-[#858585] uppercase tracking-wider block">
+                  Pridať alebo vytvoriť databázu
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <FolderPlus className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666]" />
+                    <input 
+                      type="text" 
+                      value={newDbName}
+                      onChange={(e) => setNewDbName(e.target.value)}
+                      className="w-full bg-[#1e1e1e] border border-[#333333] rounded pl-10 pr-10 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      placeholder="Názov alebo absolútna cesta k .db súboru"
+                      onKeyDown={(e) => e.key === 'Enter' && createDatabase()}
+                    />
+                    <button 
+                      onClick={() => browseFileSystem()}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-[#333] rounded text-[#858585] hover:text-white transition-colors"
+                      title="Prehliadať súbory"
+                    >
+                      <Folder className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <button 
+                    onClick={createDatabase}
+                    disabled={!newDbName}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 text-white rounded text-sm font-medium transition-colors flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Pridať
+                  </button>
                 </div>
+                <p className="text-[10px] text-[#666]">
+                  Zadajte názov pre novú databázu v predvolenom priečinku, alebo celú cestu pre existujúci súbor kdekoľvek v systéme.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-[#333333] flex justify-end bg-[#2d2d2d]">
+              <button 
+                onClick={() => setIsSettingsOpen(false)}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-all"
+              >
+                Hotovo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isFileExplorerOpen && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+          <div className="bg-[#252526] border border-[#333333] rounded-lg shadow-2xl w-full max-w-2xl h-[70vh] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="p-4 border-b border-[#333333] flex items-center justify-between bg-[#2d2d2d]">
+              <div className="flex items-center gap-2 font-bold text-white">
+                <Folder className="w-5 h-5 text-blue-400" />
+                <span>Prehliadač súborov</span>
+              </div>
+              <button 
+                onClick={() => setIsFileExplorerOpen(false)}
+                className="text-[#858585] hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-[#1e1e1e] border-b border-[#333333] flex items-center gap-2">
+              <button 
+                onClick={() => browseFileSystem()}
+                className="p-1.5 hover:bg-[#333] rounded text-[#858585] hover:text-white transition-colors"
+                title="Domov"
+              >
+                <Home className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => browseFileSystem(fsParentPath)}
+                disabled={fsCurrentPath === fsParentPath}
+                className="p-1.5 hover:bg-[#333] rounded text-[#858585] hover:text-white transition-colors disabled:opacity-30"
+                title="Hore"
+              >
+                <ArrowUp className="w-4 h-4" />
+              </button>
+              <div className="flex-1 bg-[#252526] border border-[#333333] rounded px-3 py-1 text-xs text-[#cccccc] font-mono truncate">
+                {fsCurrentPath}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-2">
+              {fsLoading ? (
+                <div className="h-full flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-1">
+                  {fsItems.map((item) => (
+                    <button
+                      key={item.path}
+                      onClick={() => {
+                        if (item.isDirectory) {
+                          browseFileSystem(item.path);
+                        } else {
+                          setNewDbName(item.path);
+                          setIsFileExplorerOpen(false);
+                        }
+                      }}
+                      className="flex items-center gap-3 p-2 hover:bg-[#2d2d2d] rounded text-left transition-colors group"
+                    >
+                      {item.isDirectory ? (
+                        <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                      ) : (
+                        <File className="w-4 h-4 text-blue-400 shrink-0" />
+                      )}
+                      <span className="text-sm text-[#cccccc] truncate flex-1 group-hover:text-white">
+                        {item.name}
+                      </span>
+                      {item.isDirectory && (
+                        <ChevronRight className="w-3 h-3 text-[#666] opacity-0 group-hover:opacity-100" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-[#333333] flex justify-between items-center bg-[#2d2d2d]">
+              <p className="text-[10px] text-[#666]">
+                Vyberte adresár pre vytvorenie novej databázy, alebo existujúci .db súbor.
+              </p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => {
+                    const pathWithSep = fsCurrentPath.endsWith(fsSep) ? fsCurrentPath : fsCurrentPath + fsSep;
+                    setNewDbName(pathWithSep);
+                    setIsFileExplorerOpen(false);
+                  }}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition-colors"
+                >
+                  Vybrať tento priečinok
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dbToDelete && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+          <div className="bg-[#252526] border border-red-900/50 rounded-lg shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="p-4 border-b border-[#333333] flex items-center justify-between bg-red-950/20">
+              <div className="flex items-center gap-2 font-bold text-red-400">
+                <Trash2 className="w-5 h-5" />
+                <span>Vymazať databázu</span>
+              </div>
+              <button 
+                onClick={() => setDbToDelete(null)}
+                className="text-[#858585] hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-[#cccccc]">
+                Naozaj chcete vymazať tento databázový súbor? Táto operácia je <span className="text-red-400 font-bold uppercase">nevratná</span> a všetky dáta v tejto databáze budú stratené.
+              </p>
+              <div className="bg-[#1e1e1e] p-3 rounded border border-[#333333] text-[10px] font-mono text-[#858585] break-all">
+                {dbToDelete}
               </div>
             </div>
 
             <div className="p-4 border-t border-[#333333] flex justify-end gap-3 bg-[#2d2d2d]">
               <button 
-                onClick={() => setIsSettingsOpen(false)}
+                onClick={() => setDbToDelete(null)}
                 className="px-4 py-2 text-sm text-[#cccccc] hover:text-white transition-colors"
               >
                 Zrušiť
               </button>
               <button 
-                onClick={saveSettings}
-                disabled={isSavingSettings || newDbPath === dbPath}
-                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded text-sm font-medium transition-colors flex items-center gap-2"
+                onClick={confirmDeleteDatabase}
+                disabled={isDeletingDb}
+                className="px-4 py-2 rounded bg-red-600 hover:bg-red-700 text-white transition-colors text-sm font-medium flex items-center gap-2"
               >
-                {isSavingSettings ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                Uložiť nastavenia
+                {isDeletingDb ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Potvrdiť vymazanie
               </button>
             </div>
           </div>
